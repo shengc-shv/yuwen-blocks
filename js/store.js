@@ -408,13 +408,15 @@
       label = '专项复习';
       var tp = all.filter(function (q) {
         var okKp = spec.kp ? q.kp === spec.kp : true;
+        var okDim = spec.dim ? q.dim === spec.dim : true;
         var okUnit = spec.units ? spec.units.indexOf(q.unit) >= 0 : true;
         var okScope = spec.scope === 'past' ? q.grade < S.grade
                     : spec.scope === 'current' ? q.grade === S.grade : true;
-        return okKp && okUnit && okScope;
+        return okKp && okDim && okUnit && okScope;
       });
       picked = rank(tp).slice(0, n);
-      note = spec.kp ? ((window.YW_KP[spec.kp] || {}).label || '所选知识点') : '所选范围';
+      note = spec.dim ? ((window.YW_DIMS[spec.dim] || {}).label || '所选维度')
+           : spec.kp ? ((window.YW_KP[spec.kp] || {}).label || '所选知识点') : '所选范围';
     } else if (mode === 'exam') {
       var ex = window.YW_EXAM[spec.examKey || 'midterm'];
       label = ex.label;

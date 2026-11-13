@@ -28,6 +28,12 @@
   function setSync(msg, cls) { syncBar.textContent = msg; syncBar.className = 'sync-bar ' + (cls || ''); }
   function dLabel(k) { return k ? k.slice(5, 7) + '月' + k.slice(8, 10) + '日' : '—'; }
   function kpName(k) { return (window.YW_KP[k] || { label: k }).label; }
+  function dimName(d) { return (window.YW_DIMS[d] || { label: '综合' }).label; }
+  function topicLabel(v) {
+    if (!v) return '';
+    if (v.indexOf('dim:') === 0) return (window.YW_DIMS[v.slice(4)] || {}).label || v;
+    return kpName(v);
+  }
   function typeName(t) { return t === 'careless' ? '看错了' : t === 'confused' ? '记混了' : t === 'unknown' ? '还没学会' : '—'; }
   function unitName(u) { var x = window.YW_UNITS.filter(function (v) { return v.id === u; })[0]; return x ? x.name : '第 ' + u + ' 单元'; }
 
@@ -329,7 +335,7 @@
       '<div class="round-head"><div class="round-dots">', dots, '</div><span class="tiny">不用赶时间</span></div>',
       feedback,
       '<div class="card">',
-        '<span class="q-meta">', esc(where), ' · ', esc(kpName(q.kp)), '</span>',
+        '<span class="q-meta">', esc(where), ' · ', esc(dimName(q.dim)), ' · ', esc(kpName(q.kp)), '</span>',
         '<div class="q-stem">', esc(q.stem), '</div>',
         '<div class="options">', opts, '</div>',
         '<div class="action-bar">',
@@ -446,6 +452,9 @@
     }).join('');
     var gradeSel = '';
     for (var i = 1; i <= 6; i++) gradeSel += '<option value="' + i + '"' + (s.grade === i ? ' selected' : '') + '>' + i + ' 年级</option>';
+    var dimButtons = Object.keys(window.YW_DIMS).map(function (k) {
+      return '<button data-action="topic-kp" data-kp="dim:' + k + '"' + (ui.topicKp === 'dim:' + k ? ' class="on"' : '') + '>' + esc(window.YW_DIMS[k].label) + '</button>';
+    }).join('');
     var kpButtons = Object.keys(window.YW_KP).map(function (k) {
       return '<button data-action="topic-kp" data-kp="' + k + '"' + (ui.topicKp === k ? ' class="on"' : '') + '>' + esc(window.YW_KP[k].label) + '</button>';
     }).join('');
@@ -477,9 +486,10 @@
         '<button class="mode-card" data-action="start-mode" data-mode="focus"><strong>重点复习</strong><span>错题优先 + 掌握度低于 60 的知识点</span></button>',
         '<button class="mode-card" data-action="start-mode" data-mode="full"><strong>全面复习</strong><span>本学期按单元均衡铺开，不落下任何一块</span></button>',
         '<button class="mode-card" data-action="start-mode" data-mode="full" data-scope="past"><strong>全面复习（过往）</strong><span>把忆往昔按年级轮着过一遍</span></button>',
-        '<button class="mode-card" data-action="start-mode" data-mode="topic" data-kp="' + esc(ui.topicKp) + '"><strong>专项复习</strong><span>只练选中的知识点', ui.topicKp ? '：' + esc(kpName(ui.topicKp)) : '（先在下面选）', '</span></button>',
+        '<button class="mode-card" data-action="start-topic"><strong>专项复习</strong><span>只练选中的维度或知识点', ui.topicKp ? '：' + esc(topicLabel(ui.topicKp)) : '（先在下面选）', '</span></button>',
       '</div>',
-      '<div class="card" style="margin-top:12px"><h3>选一个知识点</h3><div class="kp-grid">', kpButtons, '</div>',
+      '<div class="card" style="margin-top:12px"><h3>按维度整组练</h3><div class="kp-grid">', dimButtons, '</div>',
+        '<h3 style="margin-top:12px">或按细知识点练</h3><div class="kp-grid">', kpButtons, '</div>',
         '<div class="grade-row">',
           '<button data-action="topic-scope" data-scope="all"' + (ui.topicScope === 'all' ? ' class="on"' : '') + '>全部年级</button>',
           '<button data-action="topic-scope" data-scope="current"' + (ui.topicScope === 'current' ? ' class="on"' : '') + '>只练本学期</button>',
@@ -680,10 +690,14 @@
                      scope: d.scope, kp: d.kp || '',
                      units: d.units ? [Number(d.units)] : undefined });
         break;
-      case 'start-topic':
-        if (!ui.topicKp) { toast('先选一个知识点'); break; }
-        startRound({ mode: 'topic', count: 8, kp: ui.topicKp, scope: ui.topicScope });
+      case 'start-topic': {
+        if (!ui.topicKp) { toast('先在下面选一个维度或知识点'); break; }
+        var ts = { mode: 'topic', count: 8, scope: ui.topicScope };
+        if (ui.topicKp.indexOf('dim:') === 0) ts.dim = ui.topicKp.slice(4);
+        else ts.kp = ui.topicKp;
+        startRound(ts);
         break;
+      }
       case 'start-exam': startRound({ mode: 'exam', examKey: d.key }); break;
       case 'opt':
         if (!round || round.phase !== 'ask') break;
