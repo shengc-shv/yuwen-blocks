@@ -11,7 +11,7 @@
              options: options, answer: answer, trap: trap || [], focus: focus || [], tip: tip };
   }
 
-  // 忆往昔题目：低年级基础知识点，unit/lesson 为 0（不属于本学期单元）
+  // 回忆录题目：低年级基础知识点，unit/lesson 为 0（不属于本学期单元）
   function qp(id, grade, term, kp, stem, options, answer, trap, focus, tip) {
     return { id: id, unit: 0, lesson: 0, grade: grade, term: term, kp: kp, stem: stem,
              options: options, answer: answer, trap: trap || [], focus: focus || [], tip: tip };
@@ -133,7 +133,7 @@
     q('u8q7', 8, 25, 'bingju', '「（　）遇到多大困难，他（　）不放弃」应填：', ['无论…都', '因为…所以', '如果…就', '不但…而且'], 0, [1, 2], ['无论', '都'], '「无论…都」表示条件怎么变结果都不变；「如果…就」只表示假设。'),
   ];
 
-  /* ---------- 忆往昔：一、二年级基础题库（原创，按课标知识点） ---------- */
+  /* ---------- 回忆录：一、二年级基础题库（原创，按课标知识点） ---------- */
   window.YW_KP.bihua = { label: '笔画笔顺', hint: '先横后竖、先撇后捺，数清每一笔' };
   window.YW_KP.liangci = { label: '量词搭配', hint: '不同事物配不同量词' };
   window.YW_KP.xiuci = { label: '修辞与句式', hint: '看清把什么比作什么' };
@@ -177,7 +177,7 @@
                desc: '默认覆盖全册 8 个单元' },
   };
 
-  // 相对年级判定：升到四、五、六年级后，旧年级题目与旧错题自动成为「忆往昔」，无需迁移数据。
+  // 相对年级判定：升到四、五、六年级后，旧年级题目与旧错题自动成为「回忆录」，无需迁移数据。
   window.YW_pastQuestions = function (currentGrade) {
     return window.YW_QUESTIONS.filter(function (q) { return q.grade < currentGrade; });
   };

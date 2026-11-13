@@ -9,16 +9,71 @@
   <link rel="stylesheet" href="./css/style.css" />
 </head>
 <body>
+  <!-- 原创像素生物头（苔苔 / 岩岩 / 团团）：全部由矩形逐格绘制，自创形象与配色，
+       不使用任何第三方游戏的名称或美术素材。 -->
+  <svg class="mob-sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+    <symbol id="mob-moss" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="2" y="3" width="12" height="11" fill="#6abe30"/>
+      <rect x="2" y="3" width="12" height="2" fill="#8fd14f"/>
+      <rect x="2" y="12" width="12" height="2" fill="#4d9c20"/>
+      <rect x="2" y="3" width="1" height="11" fill="#4d9c20"/>
+      <rect x="13" y="3" width="1" height="11" fill="#4d9c20"/>
+      <rect x="4" y="1" width="3" height="2" fill="#3b6d11"/>
+      <rect x="9" y="1" width="3" height="2" fill="#3b6d11"/>
+      <rect x="4" y="7" width="2" height="2" fill="#2c2c2a"/>
+      <rect x="10" y="7" width="2" height="2" fill="#2c2c2a"/>
+      <rect x="3" y="9" width="2" height="1" fill="#f2a0b5"/>
+      <rect x="11" y="9" width="2" height="1" fill="#f2a0b5"/>
+      <rect x="5" y="9" width="1" height="1" fill="#2c2c2a"/>
+      <rect x="6" y="10" width="4" height="1" fill="#2c2c2a"/>
+      <rect x="10" y="9" width="1" height="1" fill="#2c2c2a"/>
+    </symbol>
+    <symbol id="mob-stone" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="2" y="3" width="12" height="11" fill="#6f9bb3"/>
+      <rect x="2" y="3" width="12" height="2" fill="#a8cdda"/>
+      <rect x="2" y="12" width="12" height="2" fill="#3f6a80"/>
+      <rect x="2" y="3" width="1" height="11" fill="#3f6a80"/>
+      <rect x="13" y="3" width="1" height="11" fill="#3f6a80"/>
+      <rect x="2" y="5" width="12" height="1" fill="#3f6a80"/>
+      <rect x="7" y="4" width="2" height="2" fill="#f5d76e"/>
+      <rect x="4" y="8" width="2" height="2" fill="#22333d"/>
+      <rect x="10" y="8" width="2" height="2" fill="#22333d"/>
+      <rect x="3" y="10" width="2" height="1" fill="#9cc7d8"/>
+      <rect x="11" y="10" width="2" height="1" fill="#9cc7d8"/>
+      <rect x="6" y="11" width="4" height="1" fill="#22333d"/>
+    </symbol>
+    <symbol id="mob-peach" viewBox="0 0 16 16" shape-rendering="crispEdges">
+      <rect x="3" y="1" width="3" height="3" fill="#c76b85"/>
+      <rect x="10" y="1" width="3" height="3" fill="#c76b85"/>
+      <rect x="2" y="3" width="12" height="11" fill="#f2a0b5"/>
+      <rect x="2" y="3" width="12" height="2" fill="#ffd0dc"/>
+      <rect x="2" y="12" width="12" height="2" fill="#c76b85"/>
+      <rect x="2" y="3" width="1" height="11" fill="#c76b85"/>
+      <rect x="13" y="3" width="1" height="11" fill="#c76b85"/>
+      <rect x="4" y="7" width="2" height="2" fill="#5e4128"/>
+      <rect x="10" y="7" width="2" height="2" fill="#5e4128"/>
+      <rect x="3" y="9" width="2" height="1" fill="#e07b96"/>
+      <rect x="11" y="9" width="2" height="1" fill="#e07b96"/>
+      <rect x="6" y="9" width="4" height="3" fill="#e07b96"/>
+      <rect x="7" y="10" width="1" height="1" fill="#8a3f55"/>
+      <rect x="9" y="10" width="1" height="1" fill="#8a3f55"/>
+    </symbol>
+  </svg>
+
   <div id="app" class="app">
     <header class="topbar">
       <div class="brand">
         <svg class="brand-ico" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
-          <rect x="1" y="1" width="14" height="14" fill="#7c5a3a"/>
-          <rect x="1" y="1" width="14" height="6" fill="#6abe30"/>
-          <rect x="1" y="1" width="14" height="2" fill="#8fd14f"/>
-          <rect x="3" y="9" width="3" height="3" fill="#5e4128"/>
-          <rect x="9" y="10" width="4" height="2" fill="#5e4128"/>
-          <rect x="1" y="13" width="14" height="2" fill="#5e4128"/>
+          <rect x="2" y="3" width="12" height="11" fill="#6abe30"/>
+          <rect x="2" y="3" width="12" height="2" fill="#8fd14f"/>
+          <rect x="2" y="12" width="12" height="2" fill="#4d9c20"/>
+          <rect x="4" y="1" width="3" height="2" fill="#3b6d11"/>
+          <rect x="9" y="1" width="3" height="2" fill="#3b6d11"/>
+          <rect x="4" y="7" width="2" height="2" fill="#2c2c2a"/>
+          <rect x="10" y="7" width="2" height="2" fill="#2c2c2a"/>
+          <rect x="5" y="9" width="1" height="1" fill="#2c2c2a"/>
+          <rect x="6" y="10" width="4" height="1" fill="#2c2c2a"/>
+          <rect x="10" y="9" width="1" height="1" fill="#2c2c2a"/>
         </svg>
         <div class="brand-txt">
           <strong>方块语文</strong>
@@ -47,17 +102,17 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" fill="currentColor"/><rect x="9" y="2" width="5" height="5" fill="currentColor"/><rect x="2" y="9" width="5" height="5" fill="currentColor"/><rect x="9" y="9" width="5" height="5" fill="currentColor"/></svg>
         <span>练习</span>
       </button>
-      <button class="tab" data-tab="past" type="button">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 7h12M6 3v10" stroke="currentColor" stroke-width="2"/></svg>
-        <span>忆往昔</span>
+      <button class="tab" data-tab="wrong" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2" width="10" height="12" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6h4M6 9h4" stroke="currentColor" stroke-width="2"/></svg>
+        <span>错题</span>
       </button>
       <button class="tab" data-tab="map" type="button">
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="10" width="14" height="4" fill="currentColor"/><rect x="3" y="6" width="4" height="4" fill="currentColor"/><rect x="9" y="4" width="4" height="6" fill="currentColor"/></svg>
         <span>地图</span>
       </button>
-      <button class="tab" data-tab="wrong" type="button">
-        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2" width="10" height="12" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6h4M6 9h4" stroke="currentColor" stroke-width="2"/></svg>
-        <span>错题</span>
+      <button class="tab" data-tab="past" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 7h12M6 3v10" stroke="currentColor" stroke-width="2"/></svg>
+        <span>回忆录</span>
       </button>
       <button class="tab" data-tab="saves" type="button">
         <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" fill="none" stroke="currentColor" stroke-width="2"/><rect x="5" y="6" width="6" height="4" fill="currentColor"/></svg>

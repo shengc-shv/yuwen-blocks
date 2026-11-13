@@ -38,15 +38,49 @@
   function typeName(t) { return t === 'careless' ? '看错了' : t === 'confused' ? '记混了' : t === 'unknown' ? '还没学会' : '—'; }
   function unitName(u) { var x = window.YW_UNITS.filter(function (v) { return v.id === u; })[0]; return x ? x.name : '第 ' + u + ' 单元'; }
 
-  // 题目出处：明确到「第几课《课题》」，忆往昔题标明年级册次
+  // 题目出处：明确到「第几课《课题》」，回忆录题标明年级册次
   function sourceOf(q) {
     if (q.grade !== S().grade) {
-      return { book: q.grade + ' 年级' + q.term + '册 · 忆往昔', unit: '过往知识重点复习' };
+      return { book: q.grade + ' 年级' + q.term + '册 · 回忆录', unit: '过往知识重点复习' };
     }
     return {
       book: (q.lesson > 0 ? '第 ' + q.lesson + ' 课 ' : '') + (q.lessonTitle ? '《' + q.lessonTitle + '》' : '本学期'),
       unit: '第 ' + q.unit + ' 单元 · ' + unitName(q.unit),
     };
+  }
+
+  /* 原创像素生物头：三种形象轮换，替代原来的方块进度格。
+     图形定义在 index.html 的 <symbol>，名字与造型均为本项目自创。 */
+  var MOB_KINDS = ['moss', 'stone', 'peach'];
+  var MOB_NAMES = { moss: '苔苔', stone: '岩岩', peach: '团团' };
+  function mobSvg(kind) {
+    // 同时给 href 与 xlink:href，兼容较旧的移动端浏览器
+    return '<svg class="mob-head" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true" ' +
+           'xmlns:xlink="http://www.w3.org/1999/xlink">' +
+           '<use href="#mob-' + kind + '" xlink:href="#mob-' + kind + '"></use></svg>';
+  }
+  function mobRow(items, results, currentIdx) {
+    return items.map(function (x, i) {
+      var kind = MOB_KINDS[i % 3], c = 'mob-slot';
+      if (i < results.length) c += results[i].correct ? ' done' : ' wrong';
+      else if (i === currentIdx) c += ' now';
+      else c += ' dim';
+      return '<span class="' + c + '" title="' + MOB_NAMES[kind] + '">' + mobSvg(kind) + '</span>';
+    }).join('');
+  }
+  function mobTower(shown) {
+    var out = '';
+    for (var i = 0; i < 20; i++) {
+      var kind = MOB_KINDS[i % 3];
+      out += '<span class="mob-blk' + (i < shown ? '' : ' dim') + '" title="' + MOB_NAMES[kind] + '">' +
+             mobSvg(kind) + '</span>';
+    }
+    return out;
+  }
+  function mobLegend() {
+    return '<p class="mob-legend">' + MOB_KINDS.map(function (k) {
+      return '<span>' + mobSvg(k) + MOB_NAMES[k] + '</span>';
+    }).join('') + '</p>';
   }
 
   function overlay(html) {
@@ -302,27 +336,20 @@
 
   function renderPracticeHome() {
     var s = S(), d = St.todayKey(), today = s.daily[d] || { attempts: 0, correct: 0, careless: 0 };
-    var tower = '';
-    var shown = Math.min(s.blocks, 20);
-    for (var i = 0; i < 20; i++) tower += '<span class="blk' + (i < shown ? '' : ' dim') + '"></span>';
+    var tower = mobTower(Math.min(s.blocks, 20));
 
     // 做到一半的这一趟：待办条，刷新或换设备回来都能接着做
     var pending = St.loadRound();
     var todo = '';
     if (pending) {
       var doneCount = pending.results.length;
-      var dots = pending.items.map(function (x, i) {
-        var c = 'dot';
-        if (i < doneCount) c += pending.results[i].correct ? ' done' : ' wrong';
-        else if (i === pending.idx) c += ' now';
-        return '<span class="' + c + '"></span>';
-      }).join('');
+      var dots = mobRow(pending.items, pending.results, pending.idx);
       todo = [
         '<div class="card todo-card">',
           '<span class="q-meta">未完成 · 待办</span>',
-          '<h3>', esc(pending.label), ' 还差 ', pending.items.length - doneCount, ' 块</h3>',
+          '<h3>', esc(pending.label), ' 还差 ', pending.items.length - doneCount, ' 位</h3>',
           '<p class="muted">已经做到第 ', Math.min(doneCount + 1, pending.items.length), ' / ',
-            pending.items.length, ' 块，随时可以接着挖完。</p>',
+            pending.items.length, ' 位，随时可以接着做完。</p>',
           '<div class="round-dots" style="margin:10px 0">', dots, '</div>',
           '<div class="btn-row">',
             '<button class="btn primary" data-action="resume-round">接着做完</button>',
@@ -356,11 +383,11 @@
           '<div class="stat-box"><b>', today.correct, '</b><span>答对</span></div>',
           '<div class="stat-box"><b>', today.careless, '</b><span>看错了</span></div>',
         '</div>',
-        '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 块）</button>',
+        '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 题）</button>',
         '<p class="tiny" style="margin-top:8px">没有倒计时；答错才会用巡查镜复盘。做到一半会自动存成待办。</p>',
       '</div>',
-      '<div class="card"><h3>建造塔</h3><div class="tower">', tower, '</div>',
-        '<p class="tiny">每答对一题垒一块，攒够 20 块升一级。中断了也不会清零。</p></div>',
+      '<div class="card"><h3>伙伴塔</h3><div class="tower">', tower, '</div>', mobLegend(),
+        '<p class="tiny">每答对一题，就有一位新伙伴住进塔里；攒够 20 位升一级。中断了也不会清零。</p></div>',
       '<p class="tiny" style="text-align:center">到期的错题会自己冒出来，混进这一趟里。</p>',
     ].join('');
   }
@@ -377,12 +404,7 @@
   function renderQuestion() {
     var it = round.items[round.idx], q = it.q, fb = round.phase === 'feedback';
     var last = round.results[round.results.length - 1];
-    var dots = round.items.map(function (x, i) {
-      var c = 'dot';
-      if (i < round.results.length) c += round.results[i].correct ? ' done' : ' wrong';
-      else if (i === round.idx) c += ' now';
-      return '<span class="' + c + '"></span>';
-    }).join('');
+    var dots = mobRow(round.items, round.results, round.idx);
     var opts = q.options.map(function (o, i) {
       var cls = 'opt';
       if (fb) {
@@ -397,14 +419,14 @@
     if (fb) {
       feedback = [
         '<div class="feedback', last.correct ? '' : ' bad', '">',
-          '<strong>', last.correct ? '答对了，垒一块方块' : '再看一眼，这块先记下来', '</strong>',
+          '<strong>', last.correct ? '答对了，来了一位新伙伴' : '再看一眼，这块先记下来', '</strong>',
           '<p>', esc(q.tip), '</p>',
           last.type ? '<span class="err-tag">错因归类：' + typeName(last.type) + ' · 已自动进错题集</span>' : '',
         '</div>',
       ].join('');
     }
     view.innerHTML = [
-      '<div class="section-title"><h2>', esc(round.label), '</h2><span class="tiny">', round.idx + 1, ' / ', round.items.length, ' 块</span></div>',
+      '<div class="section-title"><h2>', esc(round.label), '</h2><span class="tiny">', round.idx + 1, ' / ', round.items.length, ' 题</span></div>',
       '<div class="round-head"><div class="round-dots">', dots, '</div><span class="tiny">不用赶时间</span></div>',
       feedback,
       '<div class="card">',
@@ -452,7 +474,7 @@
     advance();
     // 只有答错才用快照复盘刚才那题；下一块已经在下面等着了
     if (!correct) openMirror(last, q);
-    else toast('答对了，垒一块方块');
+    else toast('答对了，来了一位新伙伴');
     syncDate(payload);
   }
 
@@ -469,8 +491,7 @@
     var careless = rs.filter(function (r) { return r.type === 'careless'; }).length;
     var confused = rs.filter(function (r) { return r.type === 'confused'; }).length;
     var unknown = rs.filter(function (r) { return r.type === 'unknown'; }).length;
-    var tower = '';
-    for (var i = 0; i < 20; i++) tower += '<span class="blk' + (i < (S().blocks % 20 || (ok ? 20 : 0)) ? '' : ' dim') + '"></span>';
+    var tower = mobTower(S().blocks % 20 || (ok ? 20 : 0));
     var report = '';
     if (round.mode === 'exam') {
       var byKp = {};
@@ -496,7 +517,7 @@
       '<div class="section-title"><h2>', esc(round.label), ' · 完成</h2><span class="tiny">', esc(St.todayKey()), '</span></div>',
       '<div class="card" style="text-align:center">',
         '<h2>这一趟挖完了</h2>',
-        '<div class="tower">', tower, '</div>',
+        '<div class="tower">', tower, '</div>', mobLegend(),
         '<div class="stat-row">',
           '<div class="stat-box"><b>', rs.length, '</b><span>共做</span></div>',
           '<div class="stat-box"><b>', ok, '</b><span>答对</span></div>',
@@ -512,7 +533,7 @@
     ].join('');
   }
 
-  /* ---------------- 忆往昔 · 复习中心 ---------------- */
+  /* ---------------- 回忆录 · 复习中心 ---------------- */
   function renderPast() {
     var s = S();
     var pastAll = window.YW_pastQuestions(s.grade);
@@ -541,7 +562,7 @@
 
     view.innerHTML = [
       '<div class="review-hero">',
-        '<h2>忆往昔</h2>',
+        '<h2>回忆录</h2>',
         '<p class="muted">把学过的都捞回来。当前 <span class="grade-big">', s.grade, ' 年级', s.term, '册</span>；低于当前年级的题目和旧错题会自动进这里，升到 4、5、6 年级不用搬家、不用导数据。</p>',
         '<div class="grade-row"><button data-action="past-grade" data-grade="0"' + (ui.pastGrade === 0 ? ' class="on"' : '') + '>全部过往</button>', gradeButtons, '</div>',
         '<p class="tiny">过往题库 ', pastAll.length, ' 道 · 其中历史错题 ', pastWrong, ' 道', grades.length ? '' : '（当前已是 1 年级，暂无更低年级题目）', '</p>',
@@ -549,7 +570,7 @@
       '</div>',
 
       '<div class="card"><h3>现在读几年级</h3>',
-        '<p class="muted">改了之后，原来年级的题目和错题立刻变成「忆往昔」，机制不用改。</p>',
+        '<p class="muted">改了之后，原来年级的题目和错题立刻变成「回忆录」，机制不用改。</p>',
         '<div class="btn-row" style="margin-top:10px">',
           '<select id="grade-select" aria-label="当前年级">', gradeSel, '</select>',
           '<select id="term-select" aria-label="上册或下册"><option value="上"' + (s.term === '上' ? ' selected' : '') + '>上册</option><option value="下"' + (s.term === '下' ? ' selected' : '') + '>下册</option></select>',
@@ -560,7 +581,7 @@
       '<div class="mode-grid">',
         '<button class="mode-card" data-action="start-mode" data-mode="focus"><strong>重点复习</strong><span>错题优先 + 掌握度低于 60 的知识点</span></button>',
         '<button class="mode-card" data-action="start-mode" data-mode="full"><strong>全面复习</strong><span>本学期按单元均衡铺开，不落下任何一块</span></button>',
-        '<button class="mode-card" data-action="start-mode" data-mode="full" data-scope="past"><strong>全面复习（过往）</strong><span>把忆往昔按年级轮着过一遍</span></button>',
+        '<button class="mode-card" data-action="start-mode" data-mode="full" data-scope="past"><strong>全面复习（过往）</strong><span>把回忆录按年级轮着过一遍</span></button>',
         '<button class="mode-card" data-action="start-topic"><strong>专项复习</strong><span>只练选中的维度或知识点', ui.topicKp ? '：' + esc(topicLabel(ui.topicKp)) : '（先在下面选）', '</span></button>',
       '</div>',
       '<div class="card" style="margin-top:12px"><h3>按维度整组练</h3><div class="kp-grid">', dimButtons, '</div>',
@@ -568,7 +589,7 @@
         '<div class="grade-row">',
           '<button data-action="topic-scope" data-scope="all"' + (ui.topicScope === 'all' ? ' class="on"' : '') + '>全部年级</button>',
           '<button data-action="topic-scope" data-scope="current"' + (ui.topicScope === 'current' ? ' class="on"' : '') + '>只练本学期</button>',
-          '<button data-action="topic-scope" data-scope="past"' + (ui.topicScope === 'past' ? ' class="on"' : '') + '>只练忆往昔</button>',
+          '<button data-action="topic-scope" data-scope="past"' + (ui.topicScope === 'past' ? ' class="on"' : '') + '>只练回忆录</button>',
         '</div>',
         '<button class="btn wide" data-action="start-topic">开始这个专项</button>',
       '</div>',
@@ -618,7 +639,7 @@
       '<div class="card"><h3>当前学到哪一课</h3>',
         '<label class="field"><span>单元</span><select id="progress-unit">', unitSel, '</select></label>',
         '<label class="field"><span>课文</span><select id="progress-lesson">', lessonSel, '</select></label>',
-        '<p class="tiny">日常练习只出当前进度及之前的题目；到「忆往昔」可以练更早的年级。</p>',
+        '<p class="tiny">日常练习只出当前进度及之前的题目；到「回忆录」可以练更早的年级。</p>',
       '</div>',
       '<div class="card"><h3>第 ', s.progress.unit, ' 单元课文</h3>', lessons, '</div>',
       '<div class="unit-grid">', cards, '</div>',
@@ -919,7 +940,7 @@
       var g = document.getElementById('grade-select').value;
       var term = document.getElementById('term-select').value;
       await St.setGrade(g, term); render();
-      toast('已切到 ' + g + ' 年级' + term + '册，旧年级内容自动进入忆往昔');
+      toast('已切到 ' + g + ' 年级' + term + '册，旧年级内容自动进入回忆录');
     } else if (t.id === 'progress-unit') {
       var pu = Number(t.value);
       var puObj = window.YW_UNITS.filter(function (x) { return x.id === pu; })[0];

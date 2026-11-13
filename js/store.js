@@ -338,7 +338,7 @@
     persist();
   }
 
-  /* ---------- 组卷：日常 / 忆往昔 / 重点 / 全面 / 专项 / 期中期末 ---------- */
+  /* ---------- 组卷：日常 / 回忆录 / 重点 / 全面 / 专项 / 期中期末 ---------- */
   function isWrong(qid) {
     var w = S.wrong[qid];
     return !!(w && !w.graduated);
@@ -399,7 +399,7 @@
       note = '范围：第 ' + digU + ' 单元' + (digL ? ' · 第 ' + digL + ' 课' : '（整单元）') +
              (primary.length < need ? ' · 本课题目不够，已用本单元补齐' : '');
     } else if (mode === 'past') {
-      label = '忆往昔 · 复习';
+      label = '回忆录 · 复习';
       var past = window.YW_pastQuestions(S.grade);
       if (spec.grade) past = past.filter(function (q) { return q.grade === spec.grade; });
       var pw = wrongIds.map(function (id) { return window.YW_Q_BY_ID[id]; })
