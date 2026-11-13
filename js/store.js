@@ -14,7 +14,8 @@
   var db = null;
   var useLS = false;
   var root = null;   // { v, activeId, profiles: { <profileId>: 该使用者的完整状态 } }
-  var S = null;      // 始终指向 root.profiles[root.activeId]
+  var S = null;      // 始终指向当前身份的状态（游客时指向内存临时态）
+  var guest = false; // 游客：不写 root、不上云，刷新即清空
   var writeChain = Promise.resolve();
 
   function randomSpaceId() {
@@ -22,6 +23,26 @@
     if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(a);
     else for (var i = 0; i < 16; i++) a[i] = Math.floor(Math.random() * 256);
     return Array.from(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+
+  /* ---------- 身份：昵称即身份 ---------- */
+  // 归一化只影响「是不是同一个昵称」的判断，不改用户看到的名字：
+  // 去掉所有空白、英文不分大小写。这样「小宇」「 小宇 」「小 宇」都算同一个人，
+  // 换设备时随手敲也能接回原来的存档。
+  function nickKey(name) {
+    return String(name == null ? '' : name).replace(/\s+/g, '').toLowerCase();
+  }
+  // 同一昵称在任何设备上推出同一个 spaceId，于是「输同一个昵称」就等于「取回同一份云端存档」，
+  // 不再需要复制粘贴存档码。两轮不同初值的哈希拼接，短昵称也不容易撞。
+  function deriveSpaceId(name) {
+    var k = nickKey(name);
+    var h = 0x811c9dc5, g = 0x9e3779b9;
+    for (var i = 0; i < k.length; i++) {
+      var c = k.charCodeAt(i);
+      h = (h ^ c) >>> 0; h = Math.imul(h, 0x01000193) >>> 0;
+      g = (g ^ (c + i + 1)) >>> 0; g = Math.imul(g, 0x85ebca6b) >>> 0;
+    }
+    return 'sn' + ('0000000' + h.toString(16)).slice(-8) + ('000' + g.toString(16)).slice(-4);
   }
 
   // 每个使用者一份完全独立的状态：错题、掌握度、进度、方块、每日存档都互不干扰。
@@ -45,12 +66,18 @@
     };
   }
 
+  // 游客：内存里的一份临时状态，永远不进 root、不进云端，关掉页面就没了
+  function guestState() {
+    var p = profileDefaults('游客');
+    p.id = 'guest';
+    p.spaceId = '';
+    p.guest = true;
+    return p;
+  }
+
+  // 全新安装时没有默认使用者：先让用户选身份（已有昵称 / 新昵称 / 游客）
   function rootDefaults() {
-    var p = profileDefaults('学习者');
-    p.spaceId = p.id;
-    var r = { v: 2, activeId: p.id, profiles: {} };
-    r.profiles[p.id] = p;
-    return r;
+    return { v: 3, activeId: null, profiles: {} };
   }
 
   /* ---------- 日期：唯一入口 ---------- */
@@ -136,20 +163,22 @@
   function buildRoot(parsed) {
     if (!parsed) return rootDefaults();
     var r;
-    if (parsed.v === 2 && parsed.profiles) {
+    if (parsed.profiles) {
       r = parsed;
+      r.v = 3;
     } else {
-      // 旧版单使用者数据自动迁成第一个档案，历史记录不丢
+      // 旧版单使用者数据自动迁成第一个档案，历史记录不丢；原 spaceId 原样保留，
+      // 不清算旧存档码，避免升级瞬间把已经在用的云端记录变成孤岛。
       var legacy = Object.assign({}, parsed);
       var id = legacy.spaceId || randomSpaceId();
-      r = { v: 2, activeId: id, profiles: {} };
+      r = { v: 3, activeId: id, profiles: {} };
       r.profiles[id] = normalizeProfile(legacy, id, '学习者');
     }
     if (!r.profiles) r.profiles = {};
     var ids = Object.keys(r.profiles);
-    if (!ids.length) return rootDefaults();
     ids.forEach(function (id) { r.profiles[id] = normalizeProfile(r.profiles[id], id, '学习者'); });
-    if (!r.profiles[r.activeId]) r.activeId = Object.keys(r.profiles)[0];
+    // 没有身份、或指向的档案已不存在 → 留给启动流程弹身份选择
+    if (!r.activeId || !r.profiles[r.activeId]) r.activeId = null;
     return r;
   }
 
@@ -169,7 +198,14 @@
       catch (e2) { parsed = null; }
     }
     root = buildRoot(parsed);
-    S = root.profiles[root.activeId];
+    if (root.activeId && root.profiles[root.activeId]) {
+      S = root.profiles[root.activeId];
+      guest = false;
+    } else {
+      // 还没选身份：先挂一份临时游客态，避免上层拿到 null
+      S = guestState();
+      guest = true;
+    }
     await persist();
     return S;
   }
@@ -451,50 +487,75 @@
 
   function pickRound(n) { return buildRound({ mode: 'daily', count: n || 5 }); }
 
-  /* ---------- 多使用者档案 ---------- */
+  /* ---------- 身份（昵称）---------- */
   function profileList() {
     return Object.keys(root.profiles).map(function (id) {
       var p = root.profiles[id];
       return {
         id: id, name: p.name, blocks: p.blocks || 0, level: p.level || 1,
         wrong: Object.keys(p.wrong || {}).filter(function (q) { return !p.wrong[q].graduated; }).length,
-        progress: p.progress, active: id === root.activeId,
+        progress: p.progress, active: !guest && id === root.activeId,
       };
     });
+  }
+  function findByName(name) {
+    var k = nickKey(name);
+    if (!k) return null;
+    var hit = Object.keys(root.profiles).filter(function (id) {
+      return nickKey(root.profiles[id].name) === k;
+    })[0];
+    return hit || null;
   }
   async function switchProfile(id) {
     if (!root.profiles[id]) throw new Error('找不到这个使用者');
     root.activeId = id;
     S = root.profiles[id];
+    guest = false;
     await persist();
     return S;
   }
+  // 昵称即身份：新建时 spaceId 由昵称推导，同名（归一化后）直接接上原来那份，不重复建档
   async function createProfile(name) {
-    var n = String(name || '').trim().slice(0, 12);
-    if (!n) throw new Error('先给这个使用者起个名字');
+    var n = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 12);
+    if (!n) throw new Error('先给这个使用者起个昵称');
+    var existed = findByName(n);
+    if (existed) return switchProfile(existed);
     var p = profileDefaults(n);
-    p.spaceId = p.id;
+    p.spaceId = deriveSpaceId(n);
     root.profiles[p.id] = p;
     root.activeId = p.id;
     S = p;
+    guest = false;
     await persist();
     return p;
   }
+  // 改名不改 spaceId：改的是称呼，不动的存档归属，避免改个错别字就把进度丢在半路
   async function renameProfile(name, id) {
-    var n = String(name || '').trim().slice(0, 12);
+    var n = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 12);
     if (!n) throw new Error('名字不能为空');
     var target = (id && root.profiles[id]) ? root.profiles[id] : S;
     target.name = n;
     await persist();
   }
   async function deleteProfile(id) {
-    if (Object.keys(root.profiles).length <= 1) throw new Error('至少要留一个使用者');
     if (!root.profiles[id]) return;
     delete root.profiles[id];
-    if (root.activeId === id) root.activeId = Object.keys(root.profiles)[0];
-    S = root.profiles[root.activeId];
+    if (root.activeId === id) {
+      root.activeId = null;
+      S = guestState();
+      guest = true;
+    }
     await persist();
   }
+  // 进入游客：只练不存。root.activeId 置空，下次打开会重新问一次身份
+  async function enterGuest() {
+    root.activeId = null;
+    S = guestState();
+    guest = true;
+    await persist();
+    return S;
+  }
+  function needIdentity() { return !root.activeId; }
 
   /* ---------- 未完成的这一趟（待办） ---------- */
   // 只存题号与进度，不存题干；题库调整后仍能还原，且每个使用者各自一份。
@@ -562,11 +623,13 @@
     var source = obj.root || obj.state || null;
     if (!source) throw new Error('文件格式不对');
     root = buildRoot(source);
-    S = root.profiles[root.activeId];
+    if (root.activeId && root.profiles[root.activeId]) { S = root.profiles[root.activeId]; guest = false; }
+    else { S = guestState(); guest = true; }
     await persist();
   }
 
   function resetLocal() {
+    if (guest) return Promise.resolve();
     var id = S.id, name = S.name, code = S.spaceId;
     S = profileDefaults(name);
     S.id = id; S.spaceId = code || id;
@@ -587,6 +650,9 @@
     isFallback: function () { return useLS; },
     profileList: profileList, switchProfile: switchProfile, createProfile: createProfile,
     renameProfile: renameProfile, deleteProfile: deleteProfile,
+    findByName: findByName, enterGuest: enterGuest, needIdentity: needIdentity,
+    isGuest: function () { return guest; },
+    spaceForName: function (name) { return deriveSpaceId(name); },
     profileId: function () { return S.id; }, profileName: function () { return S.name; },
     setSpaceId: function (code) { S.spaceId = String(code || '').trim(); return persist(); },
     setProgress: setProgress,

@@ -72,16 +72,8 @@
     return res.data;
   }
 
-  // 换设备场景：列出云端所有存档（RLS 允许匿名读，小范围家庭使用）
-  async function listAllSaves() {
-    if (!ready) throw new Error(reason);
-    var res = await cloud.database.from('daily_saves')
-      .select('space_id, save_date, payload, updated_at')
-      .order('updated_at', { ascending: false })
-      .limit(30);
-    if (res.error) throw new Error(explain(res.error));
-    return res.data || [];
-  }
+  // 换设备已改为「输同一个昵称」自动接档，不再需要遍历云端所有存档。
+  // 这里只保留按 space_id 精确查询，避免把整张表读下来。
 
   window.YWCloud = {
     init: init,
@@ -89,7 +81,6 @@
     reason: function () { return reason; },
     uploadSave: uploadSave,
     listSaves: listSaves,
-    listAllSaves: listAllSaves,
     getSave: getSave,
   };
 })();

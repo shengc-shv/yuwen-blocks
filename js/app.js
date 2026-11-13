@@ -12,7 +12,8 @@
   var ui = {
     pastGrade: 0, topicKp: '', topicScope: 'all', scopeKey: 'midterm',
     wrongFilter: 'all', cloudSaves: [], cloudOk: false, cloudMsg: '',
-    cloudOffers: [], lastSyncAt: '', lastError: '',
+    lastSyncAt: '', lastError: '',
+    mustIdentity: false,   // 首次进入必须选一个身份，不给「先不选」
   };
 
   function S() { return St.get(); }
@@ -96,6 +97,17 @@
       '</div>',
     ].join('');
   }
+  // 游客替代伙伴塔的说明卡：不留一个「会归零的塔」让孩子困惑
+  function guestCard() {
+    return [
+      '<div class="card guest-card">',
+        '<h3>现在是游客</h3>',
+        '<p class="muted">可以随便练，但什么都不会留下：没有伙伴塔、没有错题集、没有回忆录，关掉页面就清空。</p>',
+        '<button class="btn wide" style="margin-top:10px" data-action="open-identity">取个昵称，把进度存下来</button>',
+      '</div>',
+    ].join('');
+  }
+
   function overlay(html) {
     closeOverlay();
     var d = document.createElement('div');
@@ -127,12 +139,12 @@
     renameTargetId = id || St.profileId();
     var p = St.profileList().filter(function (x) { return x.id === renameTargetId; })[0];
     overlay([
-      '<h2>给使用者改名</h2>',
-      '<p class="muted">名字只存在本机，不会上传到云端。</p>',
+      '<h2>给这个昵称改名</h2>',
+      '<p class="muted">改名只改称呼，存档归属不变，进度不会丢。名字只存在本机，不会上传到云端。</p>',
       '<label class="field"><span>名字（最多 12 个字）</span>',
         '<input id="rename-input" maxlength="12" value="', esc(p ? p.name : ''), '" /></label>',
       '<div class="btn-row">',
-        '<button class="btn ghost" data-action="open-profiles">取消</button>',
+        '<button class="btn ghost" data-action="open-me">取消</button>',
         '<button class="btn primary" data-action="rename-save">保存</button>',
       '</div>',
     ].join(''));
@@ -147,6 +159,7 @@
 
   /* ---------------- 启动与同步 ---------------- */
   async function refreshCloudList(again) {
+    if (St.isGuest()) { ui.cloudSaves = []; ui.cloudOk = false; ui.cloudMsg = '游客模式不上云'; if (again) render(); return; }
     try { ui.cloudSaves = await Cl.listSaves(S().spaceId); ui.cloudOk = true; ui.cloudMsg = ''; }
     catch (e) { ui.cloudOk = false; ui.cloudMsg = e.message; }
     if (again) render();
@@ -166,49 +179,19 @@
     ui.lastSyncAt = '已从云端恢复 ' + dateOf(rows[0]);
     return true;
   }
-  function renderCloudOffer(offers) {
-    ui.cloudOffers = offers;
-    var rows = offers.map(function (o, i) {
-      return '<button class="profile-card" data-action="cloud-offer-pick" data-i="' + i + '">' +
-        '<div class="p-ico">云</div>' +
-        '<div class="p-body"><strong>存档 · ' + esc(o.date) + '</strong>' +
-        '<span>' + o.attempts + ' 题 · ' + o.blocks + ' 方块 · 点一下接着用</span></div></button>';
-    }).join('');
-    overlay([
-      '<h2>发现云端有存档</h2>',
-      '<p class="muted">这台设备是第一次打开。选一份接着用，方块、错题、掌握度和「今天挖第几课」会一起回来。</p>',
-      '<div style="margin:12px 0">', rows, '</div>',
-      '<button class="btn ghost wide" data-action="close-overlay">先不用，从新开始</button>',
-    ].join(''));
-  }
-  // 本地为空时自动接上云端，不再让用户自己去找「存档 → 恢复」
-  async function autoRestore(allowOffer) {
-    if (!Cl.isReady()) return;
+  // 昵称即身份：本机是空的、而云端这个昵称已经有存档 → 直接接回来，不用用户自己去找
+  async function autoRestore() {
+    if (!Cl.isReady() || St.isGuest()) return;
     try {
       var mine = await Cl.listSaves(S().spaceId);
-      if (mine && mine.length) {
-        if (isFreshProfile(S()) && applyLatest(mine)) toast('已从云端恢复这个使用者的进度');
-        return;
+      if (mine && mine.length && isFreshProfile(S()) && applyLatest(mine)) {
+        toast('已从云端接上「' + St.profileName() + '」的进度');
       }
-    } catch (e) { ui.lastError = e.message; return; }
-    if (!allowOffer || !isFreshProfile(S())) return;
-    try {
-      var all = await Cl.listAllSaves();
-      if (!all || !all.length) return;
-      var seen = {}, offers = [];
-      all.forEach(function (r) {
-        if (seen[r.space_id] || r.space_id === S().spaceId) return;
-        seen[r.space_id] = 1;
-        var p = r.payload || {};
-        offers.push({ code: r.space_id, date: dateOf(r),
-                      attempts: (p.today || {}).attempts || 0, blocks: p.blocks || 0, payload: p });
-      });
-      if (offers.length) renderCloudOffer(offers);
     } catch (e) { ui.lastError = e.message; }
   }
 
   async function syncPending() {
-    if (!Cl.isReady()) return;
+    if (!Cl.isReady() || St.isGuest()) return;
     var dates = S().pendingSync.slice();
     for (var i = 0; i < dates.length; i++) {
       var d = dates[i];
@@ -219,11 +202,13 @@
   }
   function updateSyncBar() {
     var s = S();
+    if (St.isGuest()) { setSync('游客模式 · 只练不存，关掉页面就清空', 'warn'); return; }
     if (!Cl.isReady()) { setSync(Cl.reason() + ' · 本地已保存', 'warn'); return; }
     if (s.pendingSync.length) { setSync(s.pendingSync.length + ' 份待同步 · 本地已保存，稍后自动重试', 'warn'); return; }
     setSync('云端已同步 · 每天一个存档（北京时间）', 'ok');
   }
   async function syncDate(payload) {
+    if (St.isGuest()) return;
     try {
       await Cl.uploadSave(S().spaceId, payload.date, payload);
       St.markSynced(payload.date);
@@ -245,9 +230,19 @@
       Cl.init();
       St.setNoAnim(S().noAnim);
       document.getElementById('edition-label').textContent = '三年级上 · 人教版 2026 秋版';
-      await syncPending();
-      await refreshCloudList(false);
-      await autoRestore(true);
+      // 第一次打开（还没选身份）：先问「你以什么身份登录」，选完再同步
+      if (St.needIdentity()) {
+        tab = 'practice';
+        render();
+        updateSyncBar();
+        renderIdentity(true);
+        return;
+      }
+      if (!St.isGuest()) {
+        await syncPending();
+        await refreshCloudList(false);
+        await autoRestore(false);
+      }
       updateSyncBar();
       if (St.isFallback()) toast('浏览器存储受限，建议换个浏览器打开');
       render();
@@ -258,60 +253,131 @@
 
   /* ---------------- 通用渲染 ---------------- */
   function updateChips() {
-    var s = S();
-    document.getElementById('who-name').textContent = St.profileName();
+    var s = S(), g = St.isGuest();
+    document.getElementById('who-name').textContent = g ? '游客' : St.profileName();
     document.getElementById('chip-level').textContent = s.level;
     document.getElementById('chip-blocks').textContent = s.blocks;
     document.getElementById('chip-streak').textContent = s.streak;
     document.getElementById('xp-fill').style.width = ((s.blocks % 20) / 20 * 100) + '%';
+    document.body.classList.toggle('is-guest', g);
   }
   function render() {
     updateChips();
+    var g = St.isGuest();
+    // 游客只有练习：没有错题 / 地图 / 回忆录，底部导航整条收起
+    document.querySelector('.tabbar').classList.toggle('hidden', g);
+    if (g) tab = 'practice';
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
       b.classList.toggle('active', b.dataset.tab === tab);
     });
-    if (tab === 'practice') renderPractice();
-    else if (tab === 'past') renderPast();
+    if (tab === 'past') renderPast();
     else if (tab === 'map') renderMap();
     else if (tab === 'wrong') renderWrong();
-    else renderSaves();
+    else renderPractice();
   }
 
-  /* ---------------- 使用者档案 ---------------- */
-  function renderProfileSheet() {
+  /* ---------------- 身份：你以什么身份登录 ---------------- */
+  // 首次进入、以及从「我的」切身份时用同一个面板：
+  // 选一个用过的昵称 / 取一个新昵称 / 以游客身份继续（只练不存）
+  function renderIdentity(must) {
+    ui.mustIdentity = !!must;
+    var list = St.profileList();
+    var cards = list.map(function (p) {
+      return '<button class="profile-card' + (p.active ? ' on' : '') + '" data-action="id-pick" data-id="' + p.id + '">' +
+        '<div class="p-ico">' + esc(p.name.slice(0, 1)) + '</div>' +
+        '<div class="p-body"><strong>' + esc(p.name) + (p.active ? ' · 上次在用' : '') + '</strong>' +
+        '<span>Lv.' + p.level + ' · ' + p.blocks + ' 方块 · ' + p.wrong + ' 道错题</span></div>' +
+        '<span class="p-go">' + (p.active ? '继续' : '进入') + '</span></button>';
+    }).join('');
+    overlay([
+      '<h2>你以什么身份登录</h2>',
+      '<p class="muted">进度跟着昵称走：同一个昵称，换台设备输进来就能接回原来的存档。</p>',
+      list.length
+        ? '<div class="id-list">' + cards + '</div>'
+        : '<p class="tiny id-empty">这台设备还没用过任何昵称，直接取一个就行。</p>',
+      '<label class="field" style="margin-top:10px"><span>新昵称（最多 12 个字）</span>' +
+        '<input id="id-name" maxlength="12" placeholder="例如：小宇" autocomplete="off" /></label>',
+      '<button class="btn primary wide" data-action="id-create">用这个昵称开始</button>',
+      '<button class="btn ghost wide" style="margin-top:8px" data-action="id-guest">以游客身份继续</button>',
+      '<p class="tiny" style="margin-top:6px">游客只能练：不存进度、不上云，没有错题集和回忆录，关掉页面就清空。</p>',
+      must ? '' : '<button class="btn ghost wide" style="margin-top:6px" data-action="close-overlay">返回</button>',
+    ].join(''));
+  }
+
+  // 选完身份之后：切标签、拉云端、把同一个昵称已有的存档接回来
+  async function afterIdentity(msg) {
+    round = null;
+    ui.cloudSaves = []; ui.lastError = '';
+    St.setNoAnim(S().noAnim);
+    tab = 'practice';
+    if (St.isGuest()) {
+      updateSyncBar(); closeOverlay(); render();
+      toast(msg || '游客模式：只练不存');
+      return;
+    }
+    await refreshCloudList(false);
+    await autoRestore();
+    await syncPending();
+    updateSyncBar(); closeOverlay(); render();
+    toast(msg || ('已进入 ' + St.profileName()));
+  }
+
+  /* ---------------- 我的（身份 / 同步 / 设置） ---------------- */
+  function renderMe() {
+    var s = S();
+    if (St.isGuest()) return renderIdentity(false);
     var list = St.profileList().map(function (p) {
       return '<div class="profile-card' + (p.active ? ' on' : '') + '">' +
         '<div class="p-ico">' + esc(p.name.slice(0, 1)) + '</div>' +
         '<div class="p-body"><strong>' + esc(p.name) + (p.active ? ' · 当前' : '') + '</strong>' +
-        '<span>Lv.' + p.level + ' · ' + p.blocks + ' 方块 · ' + p.wrong + ' 道错题 · 第 ' +
-        (p.progress ? p.progress.unit : 1) + ' 单元</span></div>' +
+        '<span>Lv.' + p.level + ' · ' + p.blocks + ' 方块 · ' + p.wrong + ' 道错题</span></div>' +
         (p.active ? '' : '<button class="p-mini" data-action="profile-switch" data-id="' + p.id + '">切换</button>') +
         '<button class="p-mini" data-action="profile-rename" data-id="' + p.id + '">改名</button>' +
         '<button class="p-mini" data-action="profile-delete" data-id="' + p.id + '">删除</button>' +
       '</div>';
     }).join('');
     overlay([
-      '<h2>今天谁在练？</h2>',
-      '<p class="muted">每个使用者都有自己独立的错题集、掌握度、进度、方块和每日存档，互不干扰。不用登录，点一下就切换。</p>',
-      '<div style="margin:12px 0">', list, '</div>',
-      '<label class="field"><span>新增使用者（起个名字就行）</span><input id="new-profile-name" placeholder="例如：小宇" maxlength="12" /></label>',
-      '<button class="btn primary wide" data-action="profile-add">新增并切换过去</button>',
-      '<button class="btn ghost wide" style="margin-top:8px" data-action="close-overlay">先不切换</button>',
-      '<p class="tiny" style="margin-top:10px">换设备时，在「存档」页复制这个使用者的存档码，粘贴回去即可读回云端记录。</p>',
-    ].join(''));
-  }
+      '<h2>我的</h2>',
+      '<p class="muted">当前身份 <b>', esc(s.name), '</b> · Lv.', s.level, ' · ', s.blocks, ' 方块</p>',
 
-  async function afterProfileChange() {
-    round = null;
-    ui.cloudSaves = [];
-    St.setNoAnim(S().noAnim);
-    await refreshCloudList(false);
-    await autoRestore(false);
-    await syncPending();
-    updateSyncBar();
-    closeOverlay();
-    render();
-    toast('已切到 ' + St.profileName());
+      '<h3 style="margin-top:14px">身份</h3>',
+      '<p class="tiny">每个昵称各有一份独立的错题、掌握度、进度和存档，互不干扰。改名只改称呼，不动存档。</p>',
+      '<div style="margin:10px 0">', list, '</div>',
+      '<label class="field"><span>新增一个昵称</span><input id="new-profile-name" placeholder="例如：小宇" maxlength="12" /></label>',
+      '<div class="btn-row">',
+        '<button class="btn primary" data-action="profile-add">新增</button>',
+        '<button class="btn ghost" data-action="open-identity">切换 / 游客</button>',
+      '</div>',
+
+      '<h3 style="margin-top:16px">同步</h3>',
+      '<div class="report-line"><span>连接</span><b>', (ui.cloudOk ? '已连接 · ' + ui.cloudSaves.length + ' 份存档' : esc(ui.cloudMsg || Cl.reason())), '</b></div>',
+      '<div class="report-line"><span>最近同步</span><b>', esc(ui.lastSyncAt || '还没有'), '</b></div>',
+      '<div class="report-line"><span>待同步</span><b>', s.pendingSync.length, ' 份</b></div>',
+      ui.lastError ? '<p class="tiny" style="color:var(--red)">最近错误：' + esc(ui.lastError) + '</p>' : '',
+      '<div class="btn-row" style="margin-top:10px">',
+        '<button class="btn primary" data-action="sync-now">立即上传今天</button>',
+        '<button class="btn" data-action="cloud-pull">从云端刷新进度</button>',
+      '</div>',
+      '<p class="tiny" style="margin-top:8px">本地始终先存一份；同步失败会标「待同步」，下次打开自动重试，不会静默丢数据。</p>',
+
+      '<h3 style="margin-top:16px">设置</h3>',
+      '<div class="switch-row"><span>关闭界面动效</span><button class="btn sm" data-action="toggle-anim">' + (s.noAnim ? '已关闭' : '开启中') + '</button></div>',
+      '<div class="btn-row" style="margin-top:10px">',
+        '<button class="btn" data-action="export-all">导出全部数据</button>',
+        '<button class="btn" data-action="import-all">导入备份</button>',
+      '</div>',
+      '<button class="btn danger wide" style="margin-top:8px" data-action="reset-local">清空这个昵称的本地记录</button>',
+
+      '<details class="me-adv"><summary>换设备 / 旧存档码</summary>',
+        '<p class="tiny" style="margin-top:8px">现在只需要在新设备上输入同一个昵称即可。这里的码只用于升级前建的老档案（那时还没有「昵称即身份」）。</p>',
+        '<div class="code-box" style="margin-top:8px"><code id="space-code">' + esc(s.spaceId) + '</code>',
+          '<button class="btn sm" data-action="saves-copy">复制</button></div>',
+        '<label class="field" style="margin-top:10px"><span>粘贴另一台设备的存档码</span><input id="space-input" placeholder="把存档码粘在这里" /></label>',
+        '<button class="btn wide" data-action="saves-code-restore">粘贴并恢复进度</button>',
+      '</details>',
+      '<button class="btn ghost wide" style="margin-top:12px" data-action="close-overlay">收起</button>',
+      '<input type="file" id="import-file" accept=".json,application/json" class="hidden" />',
+    ].join(''));
   }
 
   /* ---------------- 练习闭环 ---------------- */
@@ -360,7 +426,9 @@
              mobSvg(MOB_KINDS[i % 3]) + '</span>';
     }).join('');
     var detail = wrong
-      ? '看错了 ' + cnt.careless + ' · 记混了 ' + cnt.confused + ' · 还没学会 ' + cnt.unknown + '，都进错题集了。'
+      ? (St.isGuest()
+          ? '看错了 ' + cnt.careless + ' · 记混了 ' + cnt.confused + ' · 还没学会 ' + cnt.unknown + '（游客模式不入错题集）'
+          : '看错了 ' + cnt.careless + ' · 记混了 ' + cnt.confused + ' · 还没学会 ' + cnt.unknown + '，都进错题集了。')
       : '全对！这一趟没有错题。';
     return [
       '<div class="card run-card">',
@@ -373,7 +441,7 @@
         '<p class="muted">', detail, '</p>',
         '<div class="btn-row" style="margin-top:10px">',
           '<button class="btn sm primary" data-action="again">再挖一趟（同样范围）</button>',
-          wrong ? '<button class="btn sm ghost" data-action="go-wrong">看错题</button>' : '',
+          (wrong && !St.isGuest()) ? '<button class="btn sm ghost" data-action="go-wrong">看错题</button>' : '',
           run.mode === 'exam' ? '<button class="btn sm" data-action="run-report">这次的分析</button>' : '',
         '</div>',
       '</div>',
@@ -430,10 +498,12 @@
           '<div class="stat-box"><b>', today.careless, '</b><span>看错了</span></div>',
         '</div>',
         '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 题）</button>',
-        '<p class="tiny" style="margin-top:8px">没有倒计时；答错才会用巡查镜复盘。做到一半会自动存成待办。</p>',
+        '<p class="tiny" style="margin-top:8px">没有倒计时；答错才会用巡查镜复盘。',
+          St.isGuest() ? '游客模式：这一趟不存进度。' : '做到一半会自动存成待办。', '</p>',
       '</div>',
-      towerCard(),
-      '<p class="tiny" style="text-align:center">到期的错题会自己冒出来，混进这一趟里。</p>',
+      St.isGuest() ? guestCard() : towerCard(),
+      St.isGuest() ? '<p class="tiny" style="text-align:center">想要错题本和回忆录，就取个昵称。</p>'
+                   : '<p class="tiny" style="text-align:center">到期的错题会自己冒出来，混进这一趟里。</p>',
     ].join('');
   }
 
@@ -466,7 +536,8 @@
         '<div class="feedback', last.correct ? '' : ' bad', '">',
           '<strong>', last.correct ? '答对了，来了一位新伙伴' : '再看一眼，这块先记下来', '</strong>',
           '<p>', esc(q.tip), '</p>',
-          last.type ? '<span class="err-tag">错因归类：' + typeName(last.type) + ' · 已自动进错题集</span>' : '',
+          last.type ? '<span class="err-tag">错因归类：' + typeName(last.type) +
+            (St.isGuest() ? '（游客模式不入错题集）' : ' · 已自动进错题集') + '</span>' : '',
         '</div>',
       ].join('');
     }
@@ -558,6 +629,7 @@
     advance();
     // 只有答错才用快照复盘刚才那题；下一块已经在下面等着了
     if (!correct) openMirror(last, q);
+    else if (St.isGuest()) toast('答对了');
     else if (leveled) toast('第 ' + (S().level - 1) + ' 座塔住满了！升到 Lv.' + S().level + '，新塔开工');
     else toast('答对了，来了一位新伙伴');
     syncDate(payload);
@@ -764,77 +836,29 @@
     ].join('');
   }
 
-  /* ---------------- 存档 ---------------- */
-  function renderSaves() {
-    var s = S();
-    var map = {};
-    Object.keys(s.saves).forEach(function (d) { map[d] = { date: d, payload: s.saves[d], src: '本地' }; });
-    ui.cloudSaves.forEach(function (r) {
-      if (!map[r.save_date]) map[r.save_date] = { date: r.save_date, payload: r.payload, src: '云端' };
-    });
-    var rows = Object.keys(map).sort().reverse().map(function (d) {
-      var x = map[d], p = x.payload || {}, t = p.today || {};
-      return '<div class="save-row">' +
-        '<span class="s-date">' + dLabel(d) + '</span>' +
-        '<span class="s-info">' + (t.attempts || 0) + ' 题 · 对 ' + (t.correct || 0) + ' · 看错 ' + (t.careless || 0) + ' · ' + x.src + '</span>' +
-        '<button class="btn sm" data-action="saves-view" data-date="' + d + '">看</button>' +
-        '<button class="btn sm ghost" data-action="saves-download" data-date="' + d + '">存</button>' +
-        '<button class="btn sm ghost" data-action="saves-restore" data-date="' + d + '">恢复</button>' +
-      '</div>';
-    }).join('');
-    view.innerHTML = [
-      '<div class="section-title"><h2>每日存档</h2><span class="tiny">北京时间 · 一天一份</span></div>',
-      '<div class="card"><h3>', esc(St.profileName()), ' 的存档码</h3>',
-        '<p class="muted"><b>同步认码不认名</b>：名字一样不等于同一个使用者，每台设备第一次打开会生成新码。换设备时把这里的码复制过去，粘贴到下面就会自动恢复进度；首次打开新设备也会自动提示你选云端存档。别公开分享。</p>',
-        '<div class="code-box" style="margin-top:10px"><code id="space-code">' + esc(s.spaceId) + '</code>',
-          '<button class="btn sm" data-action="saves-copy">复制</button></div>',
-        '<label class="field" style="margin-top:12px"><span>粘贴另一台设备的存档码</span><input id="space-input" placeholder="把存档码粘在这里" /></label>',
-        '<button class="btn wide" data-action="saves-code-restore">粘贴并恢复进度</button>',
-      '</div>',
-      '<div class="card"><h3>云端状态</h3>',
-        '<div class="report-line"><span>连接</span><b>', (ui.cloudOk ? '已连接 · ' + ui.cloudSaves.length + ' 份存档' : esc(ui.cloudMsg || Cl.reason())), '</b></div>',
-        '<div class="report-line"><span>最近同步</span><b>', esc(ui.lastSyncAt || '还没有'), '</b></div>',
-        '<div class="report-line"><span>待同步</span><b>', s.pendingSync.length, ' 份</b></div>',
-        ui.lastError ? '<p class="tiny" style="color:var(--red)">最近错误：' + esc(ui.lastError) + '</p>' : '',
-        '<div class="btn-row" style="margin-top:12px">',
-          '<button class="btn primary" data-action="sync-now">立即上传今天</button>',
-          '<button class="btn" data-action="cloud-pull">从云端刷新进度</button>',
-        '</div>',
-        '<button class="btn sm ghost" style="margin-top:8px" data-action="saves-refresh">重新检查云端目录</button>',
-        '<p class="tiny" style="margin-top:8px">本地始终先存一份；同步失败会标「待同步」，下次打开自动重试，不会静默丢数据。</p>',
-      '</div>',
-      '<div class="card"><h3>存档目录</h3>',
-        rows || '<div class="empty"><strong>还没有存档</strong><p>做完第一趟练习，今天这份就会自动出现。</p></div>',
-      '</div>',
-      '<div class="card"><h3>设置</h3>',
-        '<div class="switch-row"><span>关闭界面动效</span><button class="btn sm" data-action="toggle-anim">' + (s.noAnim ? '已关闭' : '开启中') + '</button></div>',
-        '<div class="btn-row" style="margin-top:12px">',
-          '<button class="btn" data-action="export-all">导出全部数据</button>',
-          '<button class="btn" data-action="import-all">导入备份</button>',
-        '</div>',
-        '<button class="btn danger wide" style="margin-top:10px" data-action="reset-local">清空这个使用者的本地记录</button>',
-        '<p class="tiny" style="margin-top:8px">只影响当前使用者在本设备的记录，其他人不受影响；云端存档仍在，需要二次确认。</p>',
-      '</div>',
-      '<input type="file" id="import-file" accept=".json,application/json" class="hidden" />',
-    ].join('');
-  }
-
   /* ---------------- 事件 ---------------- */
-  function findPayload(date) {
-    if (S().saves[date]) return S().saves[date];
-    var r = ui.cloudSaves.filter(function (x) { return x.save_date === date; })[0];
-    return r ? r.payload : null;
-  }
-
   async function handle(a, b) {
     var d = b.dataset;
     switch (a) {
-      case 'open-profiles': renderProfileSheet(); break;
-      case 'profile-switch': await St.switchProfile(d.id); await afterProfileChange(); break;
+      case 'open-me': renderMe(); break;
+      case 'open-identity': renderIdentity(false); break;
+      case 'id-pick': await St.switchProfile(d.id); await afterIdentity(); break;
+      case 'id-create': {
+        var nv = (document.getElementById('id-name') || {}).value || '';
+        if (!nv.trim()) { toast('先取一个昵称'); break; }
+        var had = !!St.findByName(nv);
+        await St.createProfile(nv);
+        await afterIdentity(had ? '这个昵称用过，已经接上原来的进度' : '新昵称建好了，进度会跟着它走');
+        break;
+      }
+      case 'id-guest': await St.enterGuest(); await afterIdentity(); break;
+      case 'profile-switch': await St.switchProfile(d.id); await afterIdentity(); break;
       case 'profile-add': {
         var newName = (document.getElementById('new-profile-name') || {}).value;
+        if (!newName || !String(newName).trim()) { toast('先取一个昵称'); break; }
+        var had2 = !!St.findByName(newName);
         await St.createProfile(newName);
-        await afterProfileChange();
+        await afterIdentity(had2 ? '这个昵称用过，已经切过去' : '已新增「' + St.profileName() + '」');
         break;
       }
       case 'profile-rename': renameSheet(d.id); break;
@@ -842,7 +866,7 @@
         var rv = (document.getElementById('rename-input') || {}).value || '';
         if (!rv.trim()) { toast('名字不能为空，请重新输入'); break; }
         await St.renameProfile(rv, renameTargetId);
-        renderProfileSheet(); render(); toast('名字已更新');
+        renderMe(); render(); toast('昵称已更新');
         break;
       }
       case 'confirm-cancel':
@@ -856,10 +880,10 @@
         break;
       }
       case 'profile-delete':
-        confirmSheet('删除使用者', '会删除这个使用者的全部本地记录，此操作不可撤销；云端存档和其他使用者不受影响。', '删除', async function () {
+        confirmSheet('删除这个昵称', '会删除这个昵称在本机的全部记录，不可撤销；云端存档和其他昵称不受影响。', '删除', async function () {
           await St.deleteProfile(d.id);
-          await afterProfileChange();
-          toast('已删除该使用者');
+          if (St.needIdentity()) { round = null; render(); renderIdentity(true); }
+          else await afterIdentity('已删除该昵称');
         });
         break;
       case 'start-daily': startRound({ mode: 'daily', count: 5, unit: S().digUnit, lesson: S().digLesson }); break;
@@ -936,86 +960,56 @@
         catch (e) { toast('复制失败，请长按手动复制'); }
         break;
       case 'saves-code-restore': {
+        if (St.isGuest()) { toast('先用一个昵称登录，再恢复旧存档'); break; }
         var code = (document.getElementById('space-input') || {}).value;
         if (!code || !code.trim()) { toast('先填存档码'); break; }
         var target = code.trim(), rows;
         try { rows = await Cl.listSaves(target); ui.cloudOk = true; ui.cloudMsg = ''; }
         catch (e) { ui.cloudOk = false; ui.cloudMsg = e.message; toast('读取云端失败：' + e.message); break; }
-        if (!rows || !rows.length) { await St.setSpaceId(target); render(); toast('这个存档码下还没有云端记录'); break; }
+        if (!rows || !rows.length) { await St.setSpaceId(target); renderMe(); toast('这个存档码下还没有云端记录'); break; }
         var doRestore = async function () {
           await St.setSpaceId(target);
           St.applySnapshot(rows[0].payload);
           ui.cloudSaves = rows;
           ui.lastSyncAt = '已从云端恢复 ' + dateOf(rows[0]);
           await refreshCloudList(false);
-          updateSyncBar(); render();
+          updateSyncBar(); render(); renderMe();
           toast('已恢复 ' + dateOf(rows[0]) + ' 的进度');
         };
         if (!isFreshProfile(S())) {
-          confirmSheet('覆盖本机记录？', '这个设备当前已有练习记录，恢复云端存档会覆盖它们。确定继续吗？', '覆盖并恢复', doRestore);
+          confirmSheet('覆盖本机记录？', '这个昵称在本机已有练习记录，恢复旧存档码会覆盖它们。确定继续吗？', '覆盖并恢复', doRestore);
         } else await doRestore();
         break;
       }
-      case 'saves-refresh': await refreshCloudList(true); updateSyncBar(); toast('云端已重新检查'); break;
-      case 'cloud-offer-pick': {
-        var offer = (ui.cloudOffers || [])[Number(d.i)];
-        if (!offer) break;
-        await St.setSpaceId(offer.code);
-        St.applySnapshot(offer.payload);
-        ui.lastSyncAt = '已从云端恢复 ' + offer.date;
-        await refreshCloudList(false);
-        updateSyncBar(); closeOverlay(); render();
-        toast('已接着云端存档继续');
-        break;
-      }
+      case 'saves-refresh': await refreshCloudList(false); updateSyncBar(); renderMe(); toast('云端已重新检查'); break;
       case 'sync-now': {
         var nowPayload = St.finalizeDay(St.todayKey());
         await syncDate(nowPayload);
-        render(); toast(ui.lastError ? '同步失败：' + ui.lastError : '今天的存档已上传');
+        render(); renderMe(); toast(ui.lastError ? '同步失败：' + ui.lastError : '今天的存档已上传');
         break;
       }
       case 'cloud-pull': {
         var pulled;
         try { pulled = await Cl.listSaves(S().spaceId); }
         catch (e) { toast('拉取失败：' + e.message); break; }
-        if (!pulled || !pulled.length) { toast('云端还没有这个使用者的存档'); break; }
+        if (!pulled || !pulled.length) { toast('云端还没有这个昵称的存档'); break; }
         var runPull = async function () {
           St.applySnapshot(pulled[0].payload);
           ui.lastSyncAt = '已从云端恢复 ' + dateOf(pulled[0]);
-          await refreshCloudList(false); render(); toast('进度已从云端刷新');
+          await refreshCloudList(false); render(); renderMe(); toast('进度已从云端刷新');
         };
         if (!isFreshProfile(S())) {
           confirmSheet('用云端进度覆盖本机？', '本机当前记录会被云端最新一份替换。', '覆盖并刷新', runPull);
         } else await runPull();
         break;
       }
-      case 'saves-view': {
-        var p = findPayload(d.date);
-        overlay('<h2>' + d.date + ' 的存档</h2>' +
-          '<p class="muted">只有题号、对错、错因和掌握度，不含姓名或课文内容。</p>' +
-          '<pre style="white-space:pre-wrap;font-size:12px;background:var(--paper-2);padding:10px;border:2px solid var(--line)">' +
-          esc(JSON.stringify(p, null, 2)) + '</pre>' +
-          '<div class="btn-row"><button class="btn ghost" data-action="close-overlay">关掉</button>' +
-          '<button class="btn primary" data-action="saves-download" data-date="' + d.date + '">下载这份</button></div>');
-        break;
-      }
-      case 'saves-download': {
-        var pd = findPayload(d.date);
-        if (pd) download('方块语文-存档-' + d.date + '.json', pd);
-        break;
-      }
-      case 'saves-restore': {
-        var pr = findPayload(d.date);
-        if (!pr) { toast('找不到这份存档'); break; }
-        St.applySnapshot(pr); render(); toast('已恢复到 ' + d.date + ' 的记录'); break;
-      }
       case 'close-overlay': closeOverlay(); break;
-      case 'toggle-anim': await St.setNoAnim(!S().noAnim); render(); break;
+      case 'toggle-anim': await St.setNoAnim(!S().noAnim); render(); renderMe(); break;
       case 'export-all': download('方块语文-全部数据-' + St.todayKey() + '.json', St.exportAll()); toast('已导出'); break;
       case 'import-all': document.getElementById('import-file').click(); break;
       case 'reset-local':
-        confirmSheet('清空本地记录', '确定清空「' + St.profileName() + '」的全部本地记录？此操作不可撤销，云端存档和其他使用者不受影响。', '清空', async function () {
-          await St.resetLocal(); round = null; render(); toast('该使用者的本地记录已清空');
+        confirmSheet('清空本地记录', '确定清空「' + St.profileName() + '」的全部本地记录？此操作不可撤销，云端存档和其他昵称不受影响。', '清空', async function () {
+          await St.resetLocal(); round = null; render(); toast('这个昵称的本地记录已清空');
         });
         break;
     }
@@ -1064,6 +1058,7 @@
 
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
     b.addEventListener('click', function () {
+      if (St.isGuest()) { tab = 'practice'; return; }
       tab = b.dataset.tab; closeOverlay(); render(); window.scrollTo(0, 0);
     });
   });
