@@ -170,6 +170,21 @@ mark.focus { background: var(--amber); color: var(--ink); padding: 0 2px; font-w
 .check-list li { padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
 .check-list li::before { content: "□"; margin-right: 8px; color: var(--amber-d); font-size: 16px; }
 
+/* 分层错题解析：错因诊断 → 逐项排除 → 正解回扣 → 方法口诀 → 遮住重做 */
+.ex-diagnose { display: flex; gap: 10px; align-items: flex-start; padding: 10px; margin: 10px 0 12px; background: var(--amber); border: 2px solid var(--amber-d); }
+.ex-diagnose .badge { flex: none; padding: 2px 8px; font-size: 12px; font-weight: 700; background: var(--card); border: 2px solid var(--dirt-d); }
+.ex-diagnose p { font-size: 13px; line-height: 1.6; color: var(--ink); }
+.ex-block { border-left: 5px solid var(--stone); background: var(--paper-2); padding: 9px 11px; margin-bottom: 8px; }
+.ex-block h4 { display: flex; align-items: center; gap: 7px; font-size: 13px; margin: 0 0 4px; }
+.ex-block h4 i { font-style: normal; display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; flex: none; background: var(--card); border: 2px solid var(--dirt-d); font-size: 11px; }
+.ex-block p { font-size: 14px; line-height: 1.7; color: var(--ink); }
+.ex-wrong { border-left-color: var(--red); background: var(--red-l); }
+.ex-right { border-left-color: var(--grass-dd); background: var(--grass-l); }
+.ex-point { border-left-color: var(--stone); }
+.ex-method { border-left-color: var(--amber-d); }
+.ex-focus { font-size: 12px; color: var(--ink-2); margin: -2px 0 10px; }
+.ex-check { border: 2px dashed var(--grass-dd); background: var(--card); padding: 10px; font-size: 13px; line-height: 1.6; margin-bottom: 12px; }
+
 /* 反馈与结算 */
 .feedback { border-left: 6px solid var(--grass-dd); background: var(--grass-l); padding: 12px; margin-bottom: 12px; }
 .feedback.bad { border-left-color: var(--red); background: var(--red-l); }

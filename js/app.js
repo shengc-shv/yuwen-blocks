@@ -442,22 +442,59 @@
     ].join('');
   }
 
+  /* 分层解析块：错因 → 逐项排除 → 正解回扣 → 方法口诀 → 遮住重做 */
+  function exBlock(no, title, text, cls) {
+    return '<div class="ex-block ' + cls + '"><h4><i>' + no + '</i>' + title +
+           '</h4><p>' + esc(text) + '</p></div>';
+  }
+  function explainBlocks(q, sel) {
+    var ex = window.YWExplain.of(q);
+    return [
+      exBlock('①', sel >= 0 ? '你选的这项，错在哪' : '容易选错的项，错在哪',
+              sel >= 0 ? window.YWExplain.whyWrong(q, sel)
+                       : '把四个选项都读完，先把明显不对的划掉，再挑剩下的。', 'ex-wrong'),
+      exBlock('②', '正确答案为什么对', ex.right, 'ex-right'),
+      exBlock('③', '这题考的是什么', ex.point, 'ex-point'),
+      exBlock('④', '下次怎么想', ex.method, 'ex-method'),
+      '<div class="ex-check">', esc(ex.check), '</div>',
+    ].join('');
+  }
+  function diagnose(type) {
+    return '<div class="ex-diagnose"><span class="badge">' + esc(typeName(type)) +
+           '</span><p>' + esc(window.YWExplain.coach(type)) + '</p></div>';
+  }
+
   function openMirror(last, q) {
     var sel = last.selected, ans = q.answer, src = sourceOf(q);
+    var focusTip = (q.focus || []).filter(Boolean).slice(0, 3);
     overlay([
       '<h2>巡查镜 · 这块没挖对</h2>',
-      '<p class="muted">下一块已经准备好了，先用镜子看看差在哪一个字。</p>',
       '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
+      diagnose(last.type),
       '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
       '<div class="mirror-pick">你选了 <b>', 'ABCD'[sel], '. ', esc(q.options[sel]),
         '</b>　正确的是 <b>', 'ABCD'[ans], '. ', esc(q.options[ans]), '</b></div>',
-      '<ul class="check-list">',
-        '<li>题目问的是「选对的」还是「选不对的」？有没有看反？</li>',
-        '<li>四个选项都读完了吗？是不是只看了第一个就点？</li>',
-        '<li>形近字、多音字、的 / 地 / 得、标点，逐字对一遍</li>',
-      '</ul>',
-      '<div class="w-tip" style="margin-bottom:12px">', esc(q.tip), '</div>',
+      explainBlocks(q, sel),
+      focusTip.length ? '<div class="ex-focus">这题要盯住：' + focusTip.map(function (x) { return esc(x); }).join(' · ') + '</div>' : '',
       '<button class="btn primary wide" data-action="mirror-back">我看明白了，继续</button>',
+    ].join(''));
+  }
+
+  // 错题集里回看：沿用同一套分层解析，复习时不只是「看一眼答案」
+  function openExplain(q, sel, type) {
+    var src = sourceOf(q);
+    overlay([
+      '<h2>这道错题，再看一遍</h2>',
+      '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
+      diagnose(type),
+      '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
+      '<div class="mirror-pick">正确的是 <b>', 'ABCD'[q.answer], '. ', esc(q.options[q.answer]), '</b>' +
+        (sel >= 0 ? '　上次选了 <b>' + 'ABCD'[sel] + '. ' + esc(q.options[sel]) + '</b>' : '') + '</div>',
+      explainBlocks(q, sel),
+      '<div class="btn-row" style="margin-top:10px">',
+        '<button class="btn ghost" data-action="mirror-back">看完了</button>',
+        '<button class="btn primary" data-action="redo" data-qid="', esc(q.id), '">遮住答案，重做这道</button>',
+      '</div>',
     ].join(''));
   }
 
@@ -661,20 +698,30 @@
       if (ui.wrongFilter === 'all') return !x.w.graduated;
       return !x.w.graduated && x.w.type === ui.wrongFilter;
     }).sort(function (a, b) { return (a.w.due || '').localeCompare(b.w.due || ''); });
+    var atts = s.attempts || [];
     var rows = list.map(function (x) {
       var q = x.q, w = x.w;
       var badgeCls = w.type === 'careless' ? '' : w.type === 'confused' ? ' c' : ' u';
+      // 从最近作答里找出上次错选的哪一项，分析才讲得具体
+      var sel = -1;
+      for (var i = atts.length - 1; i >= 0; i--) {
+        if (atts[i].q === q.id && !atts[i].ok && atts[i].s >= 0) { sel = atts[i].s; break; }
+      }
+      var ex = window.YWExplain.brief(q);
       return '<div class="wrong-item">' +
         '<div class="w-head"><span class="badge' + badgeCls + '">' + typeName(w.type) + '</span>' +
         '<span>' + (w.graduated ? '已掌握' : '下次复习 ' + dLabel(w.due)) + ' · 连对 ' + (w.okCount || 0) + '/2</span></div>' +
         '<div class="w-stem">' + esc(q.stem) + '</div>' +
-        '<div class="w-tip">正确：' + esc(q.options[q.answer]) + '　' + esc(q.tip) + '</div>' +
-        '<button class="btn sm" style="margin-top:8px" data-action="redo" data-qid="' + q.id + '">重做这道</button>' +
+        '<div class="w-tip"><b>考点：</b>' + esc(ex.point) + '<br><b>下次：</b>' + esc(ex.method) + '</div>' +
+        '<div class="btn-row" style="margin-top:8px">' +
+          '<button class="btn sm ghost" data-action="wrong-explain" data-qid="' + q.id + '" data-sel="' + sel + '">看完整分析</button>' +
+          '<button class="btn sm" data-action="redo" data-qid="' + q.id + '">重做这道</button>' +
+        '</div>' +
       '</div>';
     }).join('');
     view.innerHTML = [
       '<div class="section-title"><h2>错题集</h2><span class="tiny">', all.filter(function (x) { return !x.w.graduated; }).length, ' 道待复习</span></div>',
-      '<div class="card"><p class="muted">答错自动收进来，不用抄。分为「看错了 / 记混了 / 还没学会」，按 1、3、7 天回流，连对 2 次才毕业。</p></div>',
+      '<div class="card"><p class="muted">答错自动收进来，不用抄。分为「看错了 / 记混了 / 还没学会」，按 1、3、7 天回流，连对 2 次才毕业。点「看完整分析」会按错因逐项拆解这一题。</p></div>',
       '<div class="filters">', filters, '</div>',
       rows || '<div class="empty"><strong>这里是空的</strong><p>这一类暂时没有错题，去练一趟吧。</p></div>',
       '<div style="margin-top:12px"><button class="btn wide" data-action="start-mode" data-mode="focus">把错题集中练一遍</button></div>',
@@ -807,6 +854,11 @@
         round.selected = Number(d.idx); St.saveRound(round); render();
         break;
       case 'mirror-back': closeOverlay(); break;
+      case 'wrong-explain': {
+        var eq = window.YW_Q_BY_ID[d.qid];
+        if (eq) openExplain(eq, Number(d.sel), (S().wrong[eq.id] || {}).type || 'unknown');
+        break;
+      }
       case 'submit': submitAnswer(); break;
       case 'next': advance(); break;
       case 'again': startRound(round.spec); break;
