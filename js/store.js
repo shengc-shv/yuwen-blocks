@@ -1,0 +1,392 @@
+/* 本地状态层：IndexedDB 为主，localStorage 兜底。
+ * 所有日期键一律经 window.YW_TZ（Asia/Shanghai）计算，
+ * 禁止用 new Date() 直接取日历日，禁止系统时区回落。
+ */
+(function () {
+  'use strict';
+
+  var DB_NAME = 'yuwen-blocks';
+  var DB_VER = 1;
+  var STORE = 'state';
+  var LS_KEY = 'yuwen-blocks-state-v1';
+  var REVIEW_GAPS = [1, 3, 7];
+
+  var db = null;
+  var useLS = false;
+  var S = null;
+  var writeChain = Promise.resolve();
+
+  function randomSpaceId() {
+    var a = new Uint8Array(16);
+    if (window.crypto && window.crypto.getRandomValues) window.crypto.getRandomValues(a);
+    else for (var i = 0; i < 16; i++) a[i] = Math.floor(Math.random() * 256);
+    return Array.from(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+
+  function defaults() {
+    return {
+      v: 1,
+      spaceId: randomSpaceId(),
+      grade: 3, term: '上',
+      progress: { unit: 5, lesson: 15 },
+      examScope: { midterm: [1, 2, 3, 4], final: [1, 2, 3, 4, 5, 6, 7, 8] },
+      blocks: 0, level: 1, streak: 0, lastActiveDate: null,
+      noAnim: false,
+      attempts: [], kpHistory: {}, wrong: {}, daily: {},
+      saves: {}, pendingSync: [],
+    };
+  }
+
+  /* ---------- 日期：唯一入口 ---------- */
+  function dateKey(d) {
+    var parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: window.YW_TZ, year: 'numeric', month: '2-digit', day: '2-digit',
+    }).formatToParts(d || new Date());
+    var o = {};
+    parts.forEach(function (p) { o[p.type] = p.value; });
+    return o.year + '-' + o.month + '-' + o.day;
+  }
+  function todayKey() { return dateKey(new Date()); }
+  function addDays(key, n) {
+    var a = key.split('-').map(Number);
+    // 取 UTC 正午做纯日期算术，避开任何时区/DST 影响
+    return new Date(Date.UTC(a[0], a[1] - 1, a[2] + n, 12)).toISOString().slice(0, 10);
+  }
+
+  /* ---------- 持久化 ---------- */
+  function openDB() {
+    return new Promise(function (resolve, reject) {
+      if (!window.indexedDB) { reject(new Error('no indexedDB')); return; }
+      var r = indexedDB.open(DB_NAME, DB_VER);
+      r.onupgradeneeded = function () {
+        if (!r.result.objectStoreNames.contains(STORE)) r.result.createObjectStore(STORE);
+      };
+      r.onsuccess = function () { resolve(r.result); };
+      r.onerror = function () { reject(r.error); };
+    });
+  }
+
+  function writeRaw(text) {
+    if (useLS || !db) {
+      try { localStorage.setItem(LS_KEY, text); } catch (e) { /* 存储受限，内存态仍可用 */ }
+      return Promise.resolve();
+    }
+    return new Promise(function (resolve, reject) {
+      var tx = db.transaction(STORE, 'readwrite');
+      tx.objectStore(STORE).put(text, 'main');
+      tx.oncomplete = function () { resolve(); };
+      tx.onerror = function () { reject(tx.error); };
+    });
+  }
+
+  function persist() {
+    var text = JSON.stringify(S);
+    writeChain = writeChain.then(function () { return writeRaw(text); }).catch(function () {});
+    return writeChain;
+  }
+
+  async function init() {
+    try {
+      db = await openDB();
+      S = await new Promise(function (resolve, reject) {
+        var tx = db.transaction(STORE, 'readonly');
+        var rq = tx.objectStore(STORE).get('main');
+        rq.onsuccess = function () { resolve(rq.result ? JSON.parse(rq.result) : defaults()); };
+        rq.onerror = function () { reject(rq.error); };
+      });
+    } catch (e) {
+      useLS = true;
+      try { S = JSON.parse(localStorage.getItem(LS_KEY)) || defaults(); }
+      catch (e2) { S = defaults(); }
+    }
+    var d = defaults();
+    Object.keys(d).forEach(function (k) { if (S[k] === undefined) S[k] = d[k]; });
+    await persist();
+    return S;
+  }
+
+  /* ---------- 掌握度 ---------- */
+  function masteryOf(kp) {
+    var h = (S.kpHistory[kp] || []).slice(-8);
+    if (!h.length) return 0;
+    var sum = 0, w = 0;
+    h.forEach(function (ok, i) { var weight = i + 1; w += weight; if (ok) sum += weight; });
+    return Math.round(sum / w * 100);
+  }
+  function allMastery() {
+    var out = {};
+    Object.keys(window.YW_KP).forEach(function (k) { out[k] = masteryOf(k); });
+    return out;
+  }
+  function unitMastery(unitId) {
+    var kps = {};
+    window.YW_QUESTIONS.forEach(function (q) { if (q.unit === unitId) kps[q.kp] = 1; });
+    var keys = Object.keys(kps);
+    if (!keys.length) return 0;
+    var sum = keys.reduce(function (a, k) { return a + masteryOf(k); }, 0);
+    return Math.round(sum / keys.length);
+  }
+
+  /* ---------- 错因与错题 ---------- */
+  // type: careless 看错了 / confused 记混了 / unknown 还没学会
+  function classify(q, selected) {
+    if (q.trap && q.trap.indexOf(selected) >= 0) return 'careless';
+    if (q.kp === 'xingjinzi' || q.kp === 'deDiDe' || q.kp === 'duoyinzi') return 'confused';
+    return 'unknown';
+  }
+
+  function dueWrong() {
+    var t = todayKey();
+    return Object.keys(S.wrong).filter(function (id) {
+      var w = S.wrong[id];
+      return w && !w.graduated && w.due <= t;
+    });
+  }
+
+  function recordAnswer(q, selected, correct, isReview) {
+    var t = todayKey();
+    var type = correct ? '' : classify(q, selected);
+
+    S.attempts.push({ q: q.id, d: t, ok: !!correct, t: type, s: selected });
+    if (S.attempts.length > 200) S.attempts = S.attempts.slice(-200);
+    (S.kpHistory[q.kp] = S.kpHistory[q.kp] || []).push(!!correct);
+    if (S.kpHistory[q.kp].length > 12) S.kpHistory[q.kp] = S.kpHistory[q.kp].slice(-12);
+
+    var day = S.daily[t] = S.daily[t] || { attempts: 0, correct: 0, careless: 0, blocks: 0 };
+    day.attempts += 1;
+    if (correct) { day.correct += 1; S.blocks += 1; day.blocks += 1; }
+    if (type === 'careless') day.careless += 1;
+
+    S.level = 1 + Math.floor(S.blocks / 20);
+    if (S.lastActiveDate !== t) {
+      S.streak = (S.lastActiveDate === addDays(t, -1)) ? S.streak + 1 : 1;
+      S.lastActiveDate = t;
+    }
+
+    var w = S.wrong[q.id];
+    if (isReview && w) {
+      if (correct) {
+        w.okCount = (w.okCount || 0) + 1;
+        w.stage = Math.min((w.stage || 0) + 1, REVIEW_GAPS.length - 1);
+        w.due = addDays(t, REVIEW_GAPS[w.stage]);
+        w.lastDate = t;
+        if (w.okCount >= 2) w.graduated = true;
+      } else {
+        w.okCount = 0; w.stage = 0; w.due = addDays(t, 1); w.lastDate = t;
+      }
+    } else if (!correct) {
+      S.wrong[q.id] = w
+        ? Object.assign(w, { type: type, stage: 0, due: addDays(t, 1), okCount: 0, count: (w.count || 0) + 1, graduated: false, lastDate: t })
+        : { qid: q.id, type: type, stage: 0, due: addDays(t, 1), okCount: 0, count: 1, graduated: false, lastDate: t };
+    }
+
+    var payload = finalizeDay(t);
+    persist();
+    return payload;
+  }
+
+  /* ---------- 每日存档快照 ---------- */
+  // 只存题号、对错、错因、知识点编号与统计；不存题干、姓名或任何个人信息。
+  function buildDaySnapshot(date) {
+    var d = date || todayKey();
+    return {
+      v: 1,
+      date: d,
+      tz: window.YW_TZ,
+      edition: window.YW_EDITION,
+      grade: S.grade, term: S.term,
+      blocks: S.blocks,
+      level: S.level,
+      streak: S.streak,
+      progress: { unit: S.progress.unit, lesson: S.progress.lesson },
+      today: S.daily[d] || { attempts: 0, correct: 0, careless: 0, blocks: 0 },
+      mastery: allMastery(),
+      wrong: Object.keys(S.wrong).filter(function (id) { return !S.wrong[id].graduated; })
+        .map(function (id) { return { q: id, t: S.wrong[id].type, s: S.wrong[id].stage, due: S.wrong[id].due }; }),
+      attempts: S.attempts.filter(function (a) { return a.d === d; })
+        .map(function (a) { return { q: a.q, ok: a.ok, t: a.t }; }),
+    };
+  }
+
+  function finalizeDay(date) {
+    var d = date || todayKey();
+    var payload = buildDaySnapshot(d);
+    S.saves[d] = payload;
+    if (S.pendingSync.indexOf(d) < 0) S.pendingSync.push(d);
+    persist();
+    return payload;
+  }
+
+  function markSynced(date) {
+    var i = S.pendingSync.indexOf(date);
+    if (i >= 0) S.pendingSync.splice(i, 1);
+    persist();
+  }
+
+  function applySnapshot(p) {
+    if (!p || p.v !== 1) throw new Error('存档版本不认识');
+    if (typeof p.blocks === 'number') S.blocks = p.blocks;
+    if (typeof p.level === 'number') S.level = p.level;
+    if (typeof p.streak === 'number') S.streak = p.streak;
+    if (p.progress) S.progress = { unit: p.progress.unit, lesson: p.progress.lesson };
+    if (typeof p.grade === 'number') S.grade = p.grade;
+    if (p.term) S.term = p.term;
+    if (p.today && p.date) S.daily[p.date] = p.today;
+    if (p.wrong) {
+      p.wrong.forEach(function (w) {
+        if (!window.YW_Q_BY_ID[w.q]) return;
+        S.wrong[w.q] = { qid: w.q, type: w.t, stage: w.s || 0, due: w.due, okCount: 0, count: 1, graduated: false };
+      });
+    }
+    if (p.attempts && p.date) {
+      var qBy = window.YW_Q_BY_ID;
+      p.attempts.forEach(function (a) {
+        var q = qBy[a.q]; if (!q) return;
+        (S.kpHistory[q.kp] = S.kpHistory[q.kp] || []).push(!!a.ok);
+      });
+      Object.keys(S.kpHistory).forEach(function (k) {
+        S.kpHistory[k] = S.kpHistory[k].slice(-12);
+      });
+      S.attempts = S.attempts.concat(p.attempts.map(function (a) {
+        return { q: a.q, d: p.date, ok: !!a.ok, t: a.t || '', s: -1 };
+      })).slice(-200);
+    }
+    if (p.date) S.saves[p.date] = p;
+    persist();
+  }
+
+  /* ---------- 组卷：日常 / 忆往昔 / 重点 / 全面 / 专项 / 期中期末 ---------- */
+  function isWrong(qid) {
+    var w = S.wrong[qid];
+    return !!(w && !w.graduated);
+  }
+  function rank(pool) {
+    return pool.map(function (q) {
+      return { q: q, score: masteryOf(q.kp) + Math.random() * 40 };
+    }).sort(function (a, b) { return a.score - b.score; })
+      .map(function (x) { return x.q; });
+  }
+  // 均衡抽样：按单元/年级分组轮转，保证每个区块都覆盖到
+  function balanced(pool, n) {
+    var groups = {};
+    pool.forEach(function (q) {
+      var k = q.grade === S.grade ? 'u' + q.unit : 'g' + q.grade;
+      (groups[k] = groups[k] || []).push(q);
+    });
+    Object.keys(groups).forEach(function (k) { groups[k] = rank(groups[k]); });
+    var keys = Object.keys(groups), out = [], i = 0;
+    while (out.length < n) {
+      var added = false;
+      for (var j = 0; j < keys.length && out.length < n; j++) {
+        if (groups[keys[j]].length > i) { out.push(groups[keys[j]][i]); added = true; }
+      }
+      if (!added) break;
+      i++;
+    }
+    return out;
+  }
+
+  function buildRound(spec) {
+    spec = spec || {};
+    var mode = spec.mode || 'daily';
+    var n = spec.count || (mode === 'exam' ? 10 : mode === 'full' ? 10 : 5);
+    var all = window.YW_QUESTIONS;
+    var wrongIds = Object.keys(S.wrong).filter(isWrong);
+    var picked = [], label = '今日挖掘', note = '';
+
+    if (mode === 'daily') {
+      var due = dueWrong().slice(0, 2).map(function (id) { return window.YW_Q_BY_ID[id]; }).filter(Boolean);
+      var seen = {}; due.forEach(function (q) { seen[q.id] = 1; });
+      var cur = window.YW_currentQuestions(S.grade).filter(function (q) {
+        return !seen[q.id] && q.unit <= S.progress.unit;
+      });
+      if (cur.length < n - due.length) cur = window.YW_currentQuestions(S.grade).filter(function (q) { return !seen[q.id]; });
+      if (cur.length < n - due.length) cur = all.filter(function (q) { return !seen[q.id]; });
+      picked = due.concat(rank(cur).slice(0, Math.max(0, n - due.length)));
+      note = '到期错题会先冒出来';
+    } else if (mode === 'past') {
+      label = '忆往昔 · 复习';
+      var past = window.YW_pastQuestions(S.grade);
+      if (spec.grade) past = past.filter(function (q) { return q.grade === spec.grade; });
+      var pw = wrongIds.map(function (id) { return window.YW_Q_BY_ID[id]; })
+        .filter(function (q) { return q && q.grade < S.grade && (!spec.grade || q.grade === spec.grade); });
+      var seen2 = {}; pw.forEach(function (q) { seen2[q.id] = 1; });
+      picked = rank(pw).concat(rank(past.filter(function (q) { return !seen2[q.id]; }))).slice(0, n);
+      note = '历史错题排在最前';
+    } else if (mode === 'focus') {
+      label = '重点复习';
+      var wq = wrongIds.map(function (id) { return window.YW_Q_BY_ID[id]; }).filter(Boolean);
+      var seen3 = {}; wq.forEach(function (q) { seen3[q.id] = 1; });
+      var weak = all.filter(function (q) { return !seen3[q.id] && masteryOf(q.kp) < 60; });
+      picked = rank(wq).concat(rank(weak)).slice(0, n);
+      note = '错题 + 掌握度低于 60 的知识点';
+    } else if (mode === 'full') {
+      label = '全面复习';
+      picked = balanced(spec.scope === 'past' ? window.YW_pastQuestions(S.grade) : window.YW_currentQuestions(S.grade), n);
+      note = '按单元 / 年级均衡覆盖';
+    } else if (mode === 'topic') {
+      label = '专项复习';
+      var tp = all.filter(function (q) {
+        var okKp = spec.kp ? q.kp === spec.kp : true;
+        var okUnit = spec.units ? spec.units.indexOf(q.unit) >= 0 : true;
+        var okScope = spec.scope === 'past' ? q.grade < S.grade
+                    : spec.scope === 'current' ? q.grade === S.grade : true;
+        return okKp && okUnit && okScope;
+      });
+      picked = rank(tp).slice(0, n);
+      note = spec.kp ? ((window.YW_KP[spec.kp] || {}).label || '所选知识点') : '所选范围';
+    } else if (mode === 'exam') {
+      var ex = window.YW_EXAM[spec.examKey || 'midterm'];
+      label = ex.label;
+      var units = S.examScope[ex.key] || ex.units;
+      picked = balanced(window.YW_currentQuestions(S.grade, units), spec.count || ex.count);
+      note = ex.desc + ' · 当前范围：第 ' + units.join('、') + ' 单元';
+    }
+
+    var uniq = {}, items = [];
+    picked.forEach(function (q) {
+      if (!q || uniq[q.id]) return;
+      uniq[q.id] = 1;
+      items.push({ q: q, isReview: isWrong(q.id) });
+    });
+    return { mode: mode, label: label, note: note, items: items, count: items.length };
+  }
+
+  function pickRound(n) { return buildRound({ mode: 'daily', count: n || 5 }); }
+
+  function exportAll() {
+    return { v: 1, exportedFrom: window.YW_EDITION, spaceId: S.spaceId, state: S };
+  }
+
+  async function importAll(obj) {
+    if (!obj || !obj.state) throw new Error('文件格式不对');
+    S = obj.state;
+    var d = defaults();
+    Object.keys(d).forEach(function (k) { if (S[k] === undefined) S[k] = d[k]; });
+    await persist();
+  }
+
+  function resetLocal() {
+    var code = S.spaceId;
+    S = defaults();
+    S.spaceId = code;
+    return persist();
+  }
+
+  window.YWStore = {
+    init: init, get: function () { return S; }, persist: persist,
+    dateKey: dateKey, todayKey: todayKey, addDays: addDays,
+    masteryOf: masteryOf, allMastery: allMastery, unitMastery: unitMastery,
+    classify: classify, dueWrong: dueWrong, recordAnswer: recordAnswer,
+    buildDaySnapshot: buildDaySnapshot, finalizeDay: finalizeDay, markSynced: markSynced,
+    applySnapshot: applySnapshot, pickRound: pickRound, buildRound: buildRound,
+    exportAll: exportAll, importAll: importAll, resetLocal: resetLocal,
+    isFallback: function () { return useLS; },
+    setSpaceId: function (code) { S.spaceId = String(code || '').trim(); return persist(); },
+    setProgress: function (u, l) { S.progress = { unit: Number(u), lesson: Number(l) }; return persist(); },
+    setGrade: function (g, t) { S.grade = Number(g); S.term = t || S.term; return persist(); },
+    setExamScope: function (key, units) { S.examScope[key] = units; return persist(); },
+    pastCount: function () { return window.YW_pastQuestions(S.grade).length; },
+    setNoAnim: function (v) { S.noAnim = !!v; document.documentElement.classList.toggle('no-anim', !!v); return persist(); },
+  };
+})();

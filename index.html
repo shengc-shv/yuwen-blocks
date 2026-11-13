@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#f4f1e8" />
+  <meta name="description" content="方块语文 · 人教版三年级上册语文练习，移动端网页，每日云端存档" />
+  <title>方块语文 · 三年级上</title>
+  <link rel="stylesheet" href="./css/style.css" />
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-ico" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-hidden="true">
+          <rect x="1" y="1" width="14" height="14" fill="#7c5a3a"/>
+          <rect x="1" y="1" width="14" height="6" fill="#6abe30"/>
+          <rect x="1" y="1" width="14" height="2" fill="#8fd14f"/>
+          <rect x="3" y="9" width="3" height="3" fill="#5e4128"/>
+          <rect x="9" y="10" width="4" height="2" fill="#5e4128"/>
+          <rect x="1" y="13" width="14" height="2" fill="#5e4128"/>
+        </svg>
+        <div class="brand-txt">
+          <strong>方块语文</strong>
+          <span id="edition-label">三年级上</span>
+        </div>
+      </div>
+      <div class="chips">
+        <span class="chip"><i>Lv</i><b id="chip-level">1</b></span>
+        <span class="chip"><i>方块</i><b id="chip-blocks">0</b></span>
+        <span class="chip"><i>连续</i><b id="chip-streak">0</b></span>
+      </div>
+    </header>
+
+    <div class="xp-track" aria-label="等级进度"><i id="xp-fill" class="xp-fill"></i></div>
+
+    <div id="sync-bar" class="sync-bar" role="status">本地已就绪</div>
+
+    <main id="view" class="view" aria-live="polite">
+      <div class="loading">正在整理今天的字块…</div>
+    </main>
+
+    <nav class="tabbar" aria-label="主导航">
+      <button class="tab active" data-tab="practice" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="2" width="5" height="5" fill="currentColor"/><rect x="9" y="2" width="5" height="5" fill="currentColor"/><rect x="2" y="9" width="5" height="5" fill="currentColor"/><rect x="9" y="9" width="5" height="5" fill="currentColor"/></svg>
+        <span>练习</span>
+      </button>
+      <button class="tab" data-tab="past" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" fill="none" stroke="currentColor" stroke-width="2"/><path d="M2 7h12M6 3v10" stroke="currentColor" stroke-width="2"/></svg>
+        <span>忆往昔</span>
+      </button>
+      <button class="tab" data-tab="map" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="10" width="14" height="4" fill="currentColor"/><rect x="3" y="6" width="4" height="4" fill="currentColor"/><rect x="9" y="4" width="4" height="6" fill="currentColor"/></svg>
+        <span>地图</span>
+      </button>
+      <button class="tab" data-tab="wrong" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="2" width="10" height="12" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 6h4M6 9h4" stroke="currentColor" stroke-width="2"/></svg>
+        <span>错题</span>
+      </button>
+      <button class="tab" data-tab="saves" type="button">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" fill="none" stroke="currentColor" stroke-width="2"/><rect x="5" y="6" width="6" height="4" fill="currentColor"/></svg>
+        <span>存档</span>
+      </button>
+    </nav>
+  </div>
+
+  <div id="toast" class="toast hidden" role="alert"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+  <script src="./js/config.js"></script>
+  <script src="./js/curriculum.js"></script>
+  <script src="./js/store.js"></script>
+  <script src="./js/cloud.js"></script>
+  <script src="./js/app.js"></script>
+</body>
+</html>
