@@ -72,12 +72,24 @@
     return res.data;
   }
 
+  // 换设备场景：列出云端所有存档（RLS 允许匿名读，小范围家庭使用）
+  async function listAllSaves() {
+    if (!ready) throw new Error(reason);
+    var res = await cloud.database.from('daily_saves')
+      .select('space_id, save_date, payload, updated_at')
+      .order('updated_at', { ascending: false })
+      .limit(30);
+    if (res.error) throw new Error(explain(res.error));
+    return res.data || [];
+  }
+
   window.YWCloud = {
     init: init,
     isReady: function () { return ready; },
     reason: function () { return reason; },
     uploadSave: uploadSave,
     listSaves: listSaves,
+    listAllSaves: listAllSaves,
     getSave: getSave,
   };
 })();

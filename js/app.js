@@ -12,6 +12,7 @@
   var ui = {
     pastGrade: 0, topicKp: '', topicScope: 'all', scopeKey: 'midterm',
     wrongFilter: 'all', cloudSaves: [], cloudOk: false, cloudMsg: '',
+    cloudOffers: [], lastSyncAt: '', lastError: '',
   };
 
   function S() { return St.get(); }
@@ -92,6 +93,62 @@
     catch (e) { ui.cloudOk = false; ui.cloudMsg = e.message; }
     if (again) render();
   }
+  function isFreshProfile(s) {
+    return (!s.blocks) && Object.keys(s.saves || {}).length === 0 &&
+           Object.keys(s.wrong || {}).length === 0 &&
+           (s.attempts || []).length === 0 &&
+           Object.keys(s.daily || {}).length === 0;
+  }
+  function dateOf(row) { return String(row.save_date || '').slice(0, 10); }
+  function applyLatest(rows) {
+    if (!rows || !rows.length) return false;
+    var p = rows[0].payload;
+    if (!p || p.v !== 1) return false;
+    St.applySnapshot(p);
+    ui.lastSyncAt = '已从云端恢复 ' + dateOf(rows[0]);
+    return true;
+  }
+  function renderCloudOffer(offers) {
+    ui.cloudOffers = offers;
+    var rows = offers.map(function (o, i) {
+      return '<button class="profile-card" data-action="cloud-offer-pick" data-i="' + i + '">' +
+        '<div class="p-ico">云</div>' +
+        '<div class="p-body"><strong>存档 · ' + esc(o.date) + '</strong>' +
+        '<span>' + o.attempts + ' 题 · ' + o.blocks + ' 方块 · 点一下接着用</span></div></button>';
+    }).join('');
+    overlay([
+      '<h2>发现云端有存档</h2>',
+      '<p class="muted">这台设备是第一次打开。选一份接着用，方块、错题、掌握度和「今天挖第几课」会一起回来。</p>',
+      '<div style="margin:12px 0">', rows, '</div>',
+      '<button class="btn ghost wide" data-action="close-overlay">先不用，从新开始</button>',
+    ].join(''));
+  }
+  // 本地为空时自动接上云端，不再让用户自己去找「存档 → 恢复」
+  async function autoRestore(allowOffer) {
+    if (!Cl.isReady()) return;
+    try {
+      var mine = await Cl.listSaves(S().spaceId);
+      if (mine && mine.length) {
+        if (isFreshProfile(S()) && applyLatest(mine)) toast('已从云端恢复这个使用者的进度');
+        return;
+      }
+    } catch (e) { ui.lastError = e.message; return; }
+    if (!allowOffer || !isFreshProfile(S())) return;
+    try {
+      var all = await Cl.listAllSaves();
+      if (!all || !all.length) return;
+      var seen = {}, offers = [];
+      all.forEach(function (r) {
+        if (seen[r.space_id] || r.space_id === S().spaceId) return;
+        seen[r.space_id] = 1;
+        var p = r.payload || {};
+        offers.push({ code: r.space_id, date: dateOf(r),
+                      attempts: (p.today || {}).attempts || 0, blocks: p.blocks || 0, payload: p });
+      });
+      if (offers.length) renderCloudOffer(offers);
+    } catch (e) { ui.lastError = e.message; }
+  }
+
   async function syncPending() {
     if (!Cl.isReady()) return;
     var dates = S().pendingSync.slice();
@@ -112,9 +169,14 @@
     try {
       await Cl.uploadSave(S().spaceId, payload.date, payload);
       St.markSynced(payload.date);
+      ui.lastSyncAt = new Intl.DateTimeFormat('zh-CN', {
+        timeZone: window.YW_TZ, hour: '2-digit', minute: '2-digit',
+      }).format(new Date());
+      ui.lastError = '';
       setSync('云端已同步 · ' + payload.date + ' 存档已更新', 'ok');
       await refreshCloudList(false);
     } catch (e) {
+      ui.lastError = e.message;
       setSync(e.message + '（本地已保存）', 'warn');
     }
   }
@@ -127,6 +189,7 @@
       document.getElementById('edition-label').textContent = '三年级上 · 人教版 2026 秋版';
       await syncPending();
       await refreshCloudList(false);
+      await autoRestore(true);
       updateSyncBar();
       if (St.isFallback()) toast('浏览器存储受限，建议换个浏览器打开');
       render();
@@ -185,6 +248,7 @@
     ui.cloudSaves = [];
     St.setNoAnim(S().noAnim);
     await refreshCloudList(false);
+    await autoRestore(false);
     await syncPending();
     updateSyncBar();
     closeOverlay();
@@ -606,16 +670,23 @@
     view.innerHTML = [
       '<div class="section-title"><h2>每日存档</h2><span class="tiny">北京时间 · 一天一份</span></div>',
       '<div class="card"><h3>', esc(St.profileName()), ' 的存档码</h3>',
-        '<p class="muted">每个使用者各有一串，彼此的错题和进度不会串。换手机 / 平板时填回去，这个人的云端记录就回来了。别公开分享。</p>',
+        '<p class="muted"><b>同步认码不认名</b>：名字一样不等于同一个使用者，每台设备第一次打开会生成新码。换设备时把这里的码复制过去，粘贴到下面就会自动恢复进度；首次打开新设备也会自动提示你选云端存档。别公开分享。</p>',
         '<div class="code-box" style="margin-top:10px"><code id="space-code">' + esc(s.spaceId) + '</code>',
           '<button class="btn sm" data-action="saves-copy">复制</button></div>',
-        '<label class="field" style="margin-top:12px"><span>绑定到已有存档码（换设备用）</span><input id="space-input" placeholder="把存档码粘在这里" /></label>',
-        '<button class="btn wide" data-action="saves-code-restore">读取这串码的云端存档</button>',
+        '<label class="field" style="margin-top:12px"><span>粘贴另一台设备的存档码</span><input id="space-input" placeholder="把存档码粘在这里" /></label>',
+        '<button class="btn wide" data-action="saves-code-restore">粘贴并恢复进度</button>',
       '</div>',
       '<div class="card"><h3>云端状态</h3>',
-        '<p class="' + (ui.cloudOk ? 'muted' : 'tiny') + '">' + (ui.cloudOk ? '已连接 · 云端共 ' + ui.cloudSaves.length + ' 份存档' : esc(ui.cloudMsg || Cl.reason())) + '</p>',
-        '<p class="tiny">本地始终会先存一份；同步失败会标「待同步」，下次打开自动重试，不会静默丢数据。</p>',
-        '<button class="btn sm" style="margin-top:8px" data-action="saves-refresh">重新检查云端</button>',
+        '<div class="report-line"><span>连接</span><b>', (ui.cloudOk ? '已连接 · ' + ui.cloudSaves.length + ' 份存档' : esc(ui.cloudMsg || Cl.reason())), '</b></div>',
+        '<div class="report-line"><span>最近同步</span><b>', esc(ui.lastSyncAt || '还没有'), '</b></div>',
+        '<div class="report-line"><span>待同步</span><b>', s.pendingSync.length, ' 份</b></div>',
+        ui.lastError ? '<p class="tiny" style="color:var(--red)">最近错误：' + esc(ui.lastError) + '</p>' : '',
+        '<div class="btn-row" style="margin-top:12px">',
+          '<button class="btn primary" data-action="sync-now">立即上传今天</button>',
+          '<button class="btn" data-action="cloud-pull">从云端刷新进度</button>',
+        '</div>',
+        '<button class="btn sm ghost" style="margin-top:8px" data-action="saves-refresh">重新检查云端目录</button>',
+        '<p class="tiny" style="margin-top:8px">本地始终先存一份；同步失败会标「待同步」，下次打开自动重试，不会静默丢数据。</p>',
       '</div>',
       '<div class="card"><h3>存档目录</h3>',
         rows || '<div class="empty"><strong>还没有存档</strong><p>做完第一趟练习，今天这份就会自动出现。</p></div>',
@@ -740,11 +811,57 @@
       case 'saves-code-restore': {
         var code = (document.getElementById('space-input') || {}).value;
         if (!code || !code.trim()) { toast('先填存档码'); break; }
-        await St.setSpaceId(code.trim());
-        await refreshCloudList(false);
-        updateSyncBar(); render(); toast('已切换存档码并读取云端目录'); break;
+        var target = code.trim(), rows;
+        try { rows = await Cl.listSaves(target); ui.cloudOk = true; ui.cloudMsg = ''; }
+        catch (e) { ui.cloudOk = false; ui.cloudMsg = e.message; toast('读取云端失败：' + e.message); break; }
+        if (!rows || !rows.length) { await St.setSpaceId(target); render(); toast('这个存档码下还没有云端记录'); break; }
+        var doRestore = async function () {
+          await St.setSpaceId(target);
+          St.applySnapshot(rows[0].payload);
+          ui.cloudSaves = rows;
+          ui.lastSyncAt = '已从云端恢复 ' + dateOf(rows[0]);
+          await refreshCloudList(false);
+          updateSyncBar(); render();
+          toast('已恢复 ' + dateOf(rows[0]) + ' 的进度');
+        };
+        if (!isFreshProfile(S())) {
+          confirmSheet('覆盖本机记录？', '这个设备当前已有练习记录，恢复云端存档会覆盖它们。确定继续吗？', '覆盖并恢复', doRestore);
+        } else await doRestore();
+        break;
       }
       case 'saves-refresh': await refreshCloudList(true); updateSyncBar(); toast('云端已重新检查'); break;
+      case 'cloud-offer-pick': {
+        var offer = (ui.cloudOffers || [])[Number(d.i)];
+        if (!offer) break;
+        await St.setSpaceId(offer.code);
+        St.applySnapshot(offer.payload);
+        ui.lastSyncAt = '已从云端恢复 ' + offer.date;
+        await refreshCloudList(false);
+        updateSyncBar(); closeOverlay(); render();
+        toast('已接着云端存档继续');
+        break;
+      }
+      case 'sync-now': {
+        var nowPayload = St.finalizeDay(St.todayKey());
+        await syncDate(nowPayload);
+        render(); toast(ui.lastError ? '同步失败：' + ui.lastError : '今天的存档已上传');
+        break;
+      }
+      case 'cloud-pull': {
+        var pulled;
+        try { pulled = await Cl.listSaves(S().spaceId); }
+        catch (e) { toast('拉取失败：' + e.message); break; }
+        if (!pulled || !pulled.length) { toast('云端还没有这个使用者的存档'); break; }
+        var runPull = async function () {
+          St.applySnapshot(pulled[0].payload);
+          ui.lastSyncAt = '已从云端恢复 ' + dateOf(pulled[0]);
+          await refreshCloudList(false); render(); toast('进度已从云端刷新');
+        };
+        if (!isFreshProfile(S())) {
+          confirmSheet('用云端进度覆盖本机？', '本机当前记录会被云端最新一份替换。', '覆盖并刷新', runPull);
+        } else await runPull();
+        break;
+      }
       case 'saves-view': {
         var p = findPayload(d.date);
         overlay('<h2>' + d.date + ' 的存档</h2>' +

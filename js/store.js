@@ -268,6 +268,10 @@
       level: S.level,
       streak: S.streak,
       progress: { unit: S.progress.unit, lesson: S.progress.lesson },
+      dig: { unit: S.digUnit, lesson: S.digLesson },
+      examScope: { midterm: (S.examScope || {}).midterm || [1, 2, 3, 4],
+                   final: (S.examScope || {}).final || [1, 2, 3, 4, 5, 6, 7, 8] },
+      daily: S.daily || {},
       today: S.daily[d] || { attempts: 0, correct: 0, careless: 0, blocks: 0 },
       mastery: allMastery(),
       wrong: Object.keys(S.wrong).filter(function (id) { return !S.wrong[id].graduated; })
@@ -298,8 +302,18 @@
     if (typeof p.level === 'number') S.level = p.level;
     if (typeof p.streak === 'number') S.streak = p.streak;
     if (p.progress) S.progress = { unit: p.progress.unit, lesson: p.progress.lesson };
+    if (p.progress && validUnit(p.progress.unit)) {
+      S.progress.unit = Number(p.progress.unit);
+      S.progress.lesson = normalizeLesson(S.progress.unit, p.progress.lesson, false);
+    }
+    if (p.dig && validUnit(p.dig.unit)) {
+      S.digUnit = Number(p.dig.unit);
+      S.digLesson = normalizeLesson(S.digUnit, p.dig.lesson, true);
+    }
+    if (p.examScope) S.examScope = p.examScope;
     if (typeof p.grade === 'number') S.grade = p.grade;
     if (p.term) S.term = p.term;
+    if (p.daily) Object.keys(p.daily).forEach(function (d) { S.daily[d] = p.daily[d]; });
     if (p.today && p.date) S.daily[p.date] = p.today;
     if (p.wrong) {
       p.wrong.forEach(function (w) {
