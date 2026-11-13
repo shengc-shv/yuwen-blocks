@@ -1,0 +1,5 @@
+appId: wbapp_fQChIuOVGWoHgn7P86s7qK
+name: 语文方块
+localDir: /Users/shengc/WorkBuddy/sj/yuwen-blocks
+appType: web
+entryHtml: index.html

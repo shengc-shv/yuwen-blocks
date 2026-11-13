@@ -13,7 +13,8 @@
 
   var db = null;
   var useLS = false;
-  var S = null;
+  var root = null;   // { v, activeId, profiles: { <profileId>: 该使用者的完整状态 } }
+  var S = null;      // 始终指向 root.profiles[root.activeId]
   var writeChain = Promise.resolve();
 
   function randomSpaceId() {
@@ -23,10 +24,14 @@
     return Array.from(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
   }
 
-  function defaults() {
+  // 每个使用者一份完全独立的状态：错题、掌握度、进度、方块、每日存档都互不干扰。
+  // spaceId 即 profileId，云端 UNIQUE(space_id, save_date) 天然等于「一人一天一份」。
+  function profileDefaults(name) {
     return {
       v: 1,
-      spaceId: randomSpaceId(),
+      id: randomSpaceId(),
+      name: name || '学习者',
+      spaceId: '',
       grade: 3, term: '上',
       progress: { unit: 5, lesson: 15 },
       examScope: { midterm: [1, 2, 3, 4], final: [1, 2, 3, 4, 5, 6, 7, 8] },
@@ -35,6 +40,14 @@
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
       saves: {}, pendingSync: [],
     };
+  }
+
+  function rootDefaults() {
+    var p = profileDefaults('学习者');
+    p.spaceId = p.id;
+    var r = { v: 2, activeId: p.id, profiles: {} };
+    r.profiles[p.id] = p;
+    return r;
   }
 
   /* ---------- 日期：唯一入口 ---------- */
@@ -80,27 +93,57 @@
   }
 
   function persist() {
-    var text = JSON.stringify(S);
+    var text = JSON.stringify(root);
     writeChain = writeChain.then(function () { return writeRaw(text); }).catch(function () {});
     return writeChain;
   }
 
+  function normalizeProfile(p, id, name) {
+    var d = profileDefaults(name);
+    Object.keys(d).forEach(function (k) { if (p[k] === undefined) p[k] = d[k]; });
+    p.id = id;
+    if (!p.spaceId) p.spaceId = id;
+    if (!p.name) p.name = name || '学习者';
+    return p;
+  }
+
+  function buildRoot(parsed) {
+    if (!parsed) return rootDefaults();
+    var r;
+    if (parsed.v === 2 && parsed.profiles) {
+      r = parsed;
+    } else {
+      // 旧版单使用者数据自动迁成第一个档案，历史记录不丢
+      var legacy = Object.assign({}, parsed);
+      var id = legacy.spaceId || randomSpaceId();
+      r = { v: 2, activeId: id, profiles: {} };
+      r.profiles[id] = normalizeProfile(legacy, id, '学习者');
+    }
+    if (!r.profiles) r.profiles = {};
+    var ids = Object.keys(r.profiles);
+    if (!ids.length) return rootDefaults();
+    ids.forEach(function (id) { r.profiles[id] = normalizeProfile(r.profiles[id], id, '学习者'); });
+    if (!r.profiles[r.activeId]) r.activeId = Object.keys(r.profiles)[0];
+    return r;
+  }
+
   async function init() {
+    var parsed = null;
     try {
       db = await openDB();
-      S = await new Promise(function (resolve, reject) {
+      parsed = await new Promise(function (resolve, reject) {
         var tx = db.transaction(STORE, 'readonly');
         var rq = tx.objectStore(STORE).get('main');
-        rq.onsuccess = function () { resolve(rq.result ? JSON.parse(rq.result) : defaults()); };
+        rq.onsuccess = function () { resolve(rq.result ? JSON.parse(rq.result) : null); };
         rq.onerror = function () { reject(rq.error); };
       });
     } catch (e) {
       useLS = true;
-      try { S = JSON.parse(localStorage.getItem(LS_KEY)) || defaults(); }
-      catch (e2) { S = defaults(); }
+      try { parsed = JSON.parse(localStorage.getItem(LS_KEY)) || null; }
+      catch (e2) { parsed = null; }
     }
-    var d = defaults();
-    Object.keys(d).forEach(function (k) { if (S[k] === undefined) S[k] = d[k]; });
+    root = buildRoot(parsed);
+    S = root.profiles[root.activeId];
     await persist();
     return S;
   }
@@ -194,6 +237,7 @@
       date: d,
       tz: window.YW_TZ,
       edition: window.YW_EDITION,
+      profileId: S.spaceId,
       grade: S.grade, term: S.term,
       blocks: S.blocks,
       level: S.level,
@@ -354,22 +398,68 @@
 
   function pickRound(n) { return buildRound({ mode: 'daily', count: n || 5 }); }
 
+  /* ---------- 多使用者档案 ---------- */
+  function profileList() {
+    return Object.keys(root.profiles).map(function (id) {
+      var p = root.profiles[id];
+      return {
+        id: id, name: p.name, blocks: p.blocks || 0, level: p.level || 1,
+        wrong: Object.keys(p.wrong || {}).filter(function (q) { return !p.wrong[q].graduated; }).length,
+        progress: p.progress, active: id === root.activeId,
+      };
+    });
+  }
+  async function switchProfile(id) {
+    if (!root.profiles[id]) throw new Error('找不到这个使用者');
+    root.activeId = id;
+    S = root.profiles[id];
+    await persist();
+    return S;
+  }
+  async function createProfile(name) {
+    var n = String(name || '').trim().slice(0, 12);
+    if (!n) throw new Error('先给这个使用者起个名字');
+    var p = profileDefaults(n);
+    p.spaceId = p.id;
+    root.profiles[p.id] = p;
+    root.activeId = p.id;
+    S = p;
+    await persist();
+    return p;
+  }
+  async function renameProfile(name) {
+    var n = String(name || '').trim().slice(0, 12);
+    if (!n) throw new Error('名字不能为空');
+    S.name = n;
+    await persist();
+  }
+  async function deleteProfile(id) {
+    if (Object.keys(root.profiles).length <= 1) throw new Error('至少要留一个使用者');
+    if (!root.profiles[id]) return;
+    delete root.profiles[id];
+    if (root.activeId === id) root.activeId = Object.keys(root.profiles)[0];
+    S = root.profiles[root.activeId];
+    await persist();
+  }
+
   function exportAll() {
-    return { v: 1, exportedFrom: window.YW_EDITION, spaceId: S.spaceId, state: S };
+    return { v: 2, exportedFrom: window.YW_EDITION, root: root };
   }
 
   async function importAll(obj) {
-    if (!obj || !obj.state) throw new Error('文件格式不对');
-    S = obj.state;
-    var d = defaults();
-    Object.keys(d).forEach(function (k) { if (S[k] === undefined) S[k] = d[k]; });
+    if (!obj) throw new Error('文件格式不对');
+    var source = obj.root || obj.state || null;
+    if (!source) throw new Error('文件格式不对');
+    root = buildRoot(source);
+    S = root.profiles[root.activeId];
     await persist();
   }
 
   function resetLocal() {
-    var code = S.spaceId;
-    S = defaults();
-    S.spaceId = code;
+    var id = S.id, name = S.name, code = S.spaceId;
+    S = profileDefaults(name);
+    S.id = id; S.spaceId = code || id;
+    root.profiles[id] = S;
     return persist();
   }
 
@@ -382,6 +472,9 @@
     applySnapshot: applySnapshot, pickRound: pickRound, buildRound: buildRound,
     exportAll: exportAll, importAll: importAll, resetLocal: resetLocal,
     isFallback: function () { return useLS; },
+    profileList: profileList, switchProfile: switchProfile, createProfile: createProfile,
+    renameProfile: renameProfile, deleteProfile: deleteProfile,
+    profileId: function () { return S.id; }, profileName: function () { return S.name; },
     setSpaceId: function (code) { S.spaceId = String(code || '').trim(); return persist(); },
     setProgress: function (u, l) { S.progress = { unit: Number(u), lesson: Number(l) }; return persist(); },
     setGrade: function (g, t) { S.grade = Number(g); S.term = t || S.term; return persist(); },

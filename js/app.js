@@ -99,6 +99,7 @@
   /* ---------------- 通用渲染 ---------------- */
   function updateChips() {
     var s = S();
+    document.getElementById('who-name').textContent = St.profileName();
     document.getElementById('chip-level').textContent = s.level;
     document.getElementById('chip-blocks').textContent = s.blocks;
     document.getElementById('chip-streak').textContent = s.streak;
@@ -114,6 +115,43 @@
     else if (tab === 'map') renderMap();
     else if (tab === 'wrong') renderWrong();
     else renderSaves();
+  }
+
+  /* ---------------- 使用者档案 ---------------- */
+  function renderProfileSheet() {
+    var list = St.profileList().map(function (p) {
+      return '<div class="profile-card' + (p.active ? ' on' : '') + '">' +
+        '<div class="p-ico">' + esc(p.name.slice(0, 1)) + '</div>' +
+        '<div class="p-body"><strong>' + esc(p.name) + (p.active ? ' · 当前' : '') + '</strong>' +
+        '<span>Lv.' + p.level + ' · ' + p.blocks + ' 方块 · ' + p.wrong + ' 道错题 · 第 ' +
+        (p.progress ? p.progress.unit : 1) + ' 单元</span></div>' +
+        (p.active
+          ? '<button class="p-mini" data-action="profile-rename">改名</button>'
+          : '<button class="p-mini" data-action="profile-switch" data-id="' + p.id + '">切换</button>') +
+        '<button class="p-mini" data-action="profile-delete" data-id="' + p.id + '">删除</button>' +
+      '</div>';
+    }).join('');
+    overlay([
+      '<h2>今天谁在练？</h2>',
+      '<p class="muted">每个使用者都有自己独立的错题集、掌握度、进度、方块和每日存档，互不干扰。不用登录，点一下就切换。</p>',
+      '<div style="margin:12px 0">', list, '</div>',
+      '<label class="field"><span>新增使用者（起个名字就行）</span><input id="new-profile-name" placeholder="例如：小宇" maxlength="12" /></label>',
+      '<button class="btn primary wide" data-action="profile-add">新增并切换过去</button>',
+      '<button class="btn ghost wide" style="margin-top:8px" data-action="close-overlay">先不切换</button>',
+      '<p class="tiny" style="margin-top:10px">换设备时，在「存档」页复制这个使用者的存档码，粘贴回去即可读回云端记录。</p>',
+    ].join(''));
+  }
+
+  async function afterProfileChange() {
+    round = null;
+    ui.cloudSaves = [];
+    St.setNoAnim(S().noAnim);
+    await refreshCloudList(false);
+    await syncPending();
+    updateSyncBar();
+    closeOverlay();
+    render();
+    toast('已切到 ' + St.profileName());
   }
 
   /* ---------------- 练习闭环 ---------------- */
@@ -470,11 +508,11 @@
     }).join('');
     view.innerHTML = [
       '<div class="section-title"><h2>每日存档</h2><span class="tiny">北京时间 · 一天一份</span></div>',
-      '<div class="card"><h3>存档码</h3>',
-        '<p class="muted">这串码就是你家存档的钥匙。换手机 / 平板时填回去，历史记录就回来了。别公开分享。</p>',
+      '<div class="card"><h3>', esc(St.profileName()), ' 的存档码</h3>',
+        '<p class="muted">每个使用者各有一串，彼此的错题和进度不会串。换手机 / 平板时填回去，这个人的云端记录就回来了。别公开分享。</p>',
         '<div class="code-box" style="margin-top:10px"><code id="space-code">' + esc(s.spaceId) + '</code>',
           '<button class="btn sm" data-action="saves-copy">复制</button></div>',
-        '<label class="field" style="margin-top:12px"><span>用存档码恢复</span><input id="space-input" placeholder="把存档码粘在这里" /></label>',
+        '<label class="field" style="margin-top:12px"><span>绑定到已有存档码（换设备用）</span><input id="space-input" placeholder="把存档码粘在这里" /></label>',
         '<button class="btn wide" data-action="saves-code-restore">读取这串码的云端存档</button>',
       '</div>',
       '<div class="card"><h3>云端状态</h3>',
@@ -491,8 +529,8 @@
           '<button class="btn" data-action="export-all">导出全部数据</button>',
           '<button class="btn" data-action="import-all">导入备份</button>',
         '</div>',
-        '<button class="btn danger wide" style="margin-top:10px" data-action="reset-local">清空本地记录</button>',
-        '<p class="tiny" style="margin-top:8px">清空只影响本设备，云端存档仍在；需要二次确认。</p>',
+        '<button class="btn danger wide" style="margin-top:10px" data-action="reset-local">清空这个使用者的本地记录</button>',
+        '<p class="tiny" style="margin-top:8px">只影响当前使用者在本设备的记录，其他人不受影响；云端存档仍在，需要二次确认。</p>',
       '</div>',
       '<input type="file" id="import-file" accept=".json,application/json" class="hidden" />',
     ].join('');
@@ -508,6 +546,29 @@
   async function handle(a, b) {
     var d = b.dataset;
     switch (a) {
+      case 'open-profiles': renderProfileSheet(); break;
+      case 'profile-switch': await St.switchProfile(d.id); await afterProfileChange(); break;
+      case 'profile-add': {
+        var newName = (document.getElementById('new-profile-name') || {}).value;
+        await St.createProfile(newName);
+        await afterProfileChange();
+        break;
+      }
+      case 'profile-rename': {
+        var renamed = window.prompt('给当前使用者起个新名字', St.profileName());
+        if (renamed === null) break;
+        await St.renameProfile(renamed);
+        renderProfileSheet(); render();
+        break;
+      }
+      case 'profile-delete': {
+        if (window.confirm('删除这个使用者的全部本地记录？此操作不可撤销，云端存档不会删除。')) {
+          await St.deleteProfile(d.id);
+          await afterProfileChange();
+          toast('已删除该使用者');
+        }
+        break;
+      }
       case 'start-daily': startRound({ mode: 'daily', count: 5 }); break;
       case 'start-past': startRound({ mode: 'past', count: 6, grade: Number(d.grade) || 0 }); break;
       case 'start-mode':
@@ -587,8 +648,8 @@
       case 'export-all': download('方块语文-全部数据-' + St.todayKey() + '.json', St.exportAll()); toast('已导出'); break;
       case 'import-all': document.getElementById('import-file').click(); break;
       case 'reset-local':
-        if (window.confirm('确定清空本设备的全部学习记录？此操作不可撤销，云端存档不会删除。')) {
-          await St.resetLocal(); round = null; render(); toast('本地记录已清空');
+        if (window.confirm('确定清空「' + St.profileName() + '」的全部本地记录？此操作不可撤销，云端存档和其他使用者不受影响。')) {
+          await St.resetLocal(); round = null; render(); toast('该使用者的本地记录已清空');
         }
         break;
     }
