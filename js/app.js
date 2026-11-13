@@ -38,6 +38,17 @@
   function typeName(t) { return t === 'careless' ? '看错了' : t === 'confused' ? '记混了' : t === 'unknown' ? '还没学会' : '—'; }
   function unitName(u) { var x = window.YW_UNITS.filter(function (v) { return v.id === u; })[0]; return x ? x.name : '第 ' + u + ' 单元'; }
 
+  // 题目出处：明确到「第几课《课题》」，忆往昔题标明年级册次
+  function sourceOf(q) {
+    if (q.grade !== S().grade) {
+      return { book: q.grade + ' 年级' + q.term + '册 · 忆往昔', unit: '过往知识重点复习' };
+    }
+    return {
+      book: (q.lesson > 0 ? '第 ' + q.lesson + ' 课 ' : '') + (q.lessonTitle ? '《' + q.lessonTitle + '》' : '本学期'),
+      unit: '第 ' + q.unit + ' 单元 · ' + unitName(q.unit),
+    };
+  }
+
   function overlay(html) {
     closeOverlay();
     var d = document.createElement('div');
@@ -381,9 +392,7 @@
       return '<button type="button" class="' + cls + '" data-action="opt" data-idx="' + i + '"' + (fb ? ' disabled' : '') + '>' +
              '<span class="key">' + 'ABCD'[i] + '</span><span>' + esc(o) + '</span></button>';
     }).join('');
-    var where = q.grade === S().grade
-      ? '第 ' + q.unit + ' 单元 · ' + unitName(q.unit)
-      : q.grade + ' 年级' + q.term + '册 · 忆往昔';
+    var src = sourceOf(q);
     var feedback = '';
     if (fb) {
       feedback = [
@@ -399,7 +408,8 @@
       '<div class="round-head"><div class="round-dots">', dots, '</div><span class="tiny">不用赶时间</span></div>',
       feedback,
       '<div class="card">',
-        '<span class="q-meta">', esc(where), ' · ', esc(dimName(q.dim)), ' · ', esc(kpName(q.kp)), '</span>',
+        '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
+        '<span class="q-meta">', esc(dimName(q.dim)), ' · ', esc(kpName(q.kp)), '</span>',
         '<div class="q-stem">', esc(q.stem), '</div>',
         '<div class="options">', opts, '</div>',
         '<div class="action-bar">',
@@ -411,10 +421,11 @@
   }
 
   function openMirror(last, q) {
-    var sel = last.selected, ans = q.answer;
+    var sel = last.selected, ans = q.answer, src = sourceOf(q);
     overlay([
       '<h2>巡查镜 · 这块没挖对</h2>',
       '<p class="muted">下一块已经准备好了，先用镜子看看差在哪一个字。</p>',
+      '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
       '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
       '<div class="mirror-pick">你选了 <b>', 'ABCD'[sel], '. ', esc(q.options[sel]),
         '</b>　正确的是 <b>', 'ABCD'[ans], '. ', esc(q.options[ans]), '</b></div>',
