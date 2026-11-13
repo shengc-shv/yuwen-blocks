@@ -34,6 +34,8 @@
       spaceId: '',
       grade: 3, term: '上',
       progress: { unit: 5, lesson: 15 },
+      digUnit: 5, digLesson: 15,
+      pendingRound: null,
       examScope: { midterm: [1, 2, 3, 4], final: [1, 2, 3, 4, 5, 6, 7, 8] },
       blocks: 0, level: 1, streak: 0, lastActiveDate: null,
       noAnim: false,
@@ -339,15 +341,26 @@
     var picked = [], label = '今日挖掘', note = '';
 
     if (mode === 'daily') {
+      var digU = spec.unit || S.digUnit || S.progress.unit;
+      var digL = (spec.lesson !== undefined && spec.lesson !== null)
+        ? spec.lesson : (S.digLesson || S.progress.lesson);
       var due = dueWrong().slice(0, 2).map(function (id) { return window.YW_Q_BY_ID[id]; }).filter(Boolean);
       var seen = {}; due.forEach(function (q) { seen[q.id] = 1; });
-      var cur = window.YW_currentQuestions(S.grade).filter(function (q) {
-        return !seen[q.id] && q.unit <= S.progress.unit;
-      });
-      if (cur.length < n - due.length) cur = window.YW_currentQuestions(S.grade).filter(function (q) { return !seen[q.id]; });
-      if (cur.length < n - due.length) cur = all.filter(function (q) { return !seen[q.id]; });
-      picked = due.concat(rank(cur).slice(0, Math.max(0, n - due.length)));
-      note = '到期错题会先冒出来';
+      var need = Math.max(0, n - due.length);
+      var cur = window.YW_currentQuestions(S.grade).filter(function (q) { return !seen[q.id]; });
+      var inLesson = cur.filter(function (q) { return q.unit === digU && (!digL || q.lesson === digL); });
+      var inUnit = cur.filter(function (q) { return q.unit === digU; });
+      var learned = cur.filter(function (q) { return q.unit <= digU; });
+      var primary = rank(inLesson);
+      var used = {}; primary.forEach(function (q) { used[q.id] = 1; });
+      var extra = rank(inUnit.filter(function (q) { return !used[q.id]; }));
+      extra.forEach(function (q) { used[q.id] = 1; });
+      var more = rank(learned.filter(function (q) { return !used[q.id]; }));
+      more.forEach(function (q) { used[q.id] = 1; });
+      var rest = rank(cur.filter(function (q) { return !used[q.id]; }));
+      picked = due.concat(primary.concat(extra, more, rest).slice(0, need));
+      note = '范围：第 ' + digU + ' 单元' + (digL ? ' · 第 ' + digL + ' 课' : '（整单元）') +
+             (primary.length < need ? ' · 本课题目不够，已用本单元补齐' : '');
     } else if (mode === 'past') {
       label = '忆往昔 · 复习';
       var past = window.YW_pastQuestions(S.grade);
@@ -442,6 +455,44 @@
     await persist();
   }
 
+  /* ---------- 未完成的这一趟（待办） ---------- */
+  // 只存题号与进度，不存题干；题库调整后仍能还原，且每个使用者各自一份。
+  function saveRound(r) {
+    if (!r) { S.pendingRound = null; persist(); return; }
+    S.pendingRound = {
+      spec: r.spec || {},
+      label: r.label, note: r.note || '', mode: r.mode,
+      items: r.items.map(function (it) { return { q: it.q.id, isReview: !!it.isReview }; }),
+      idx: r.idx || 0,
+      results: r.results || [],
+      selected: r.selected,
+      phase: r.phase || 'ask',
+    };
+    persist();
+  }
+  function loadRound() {
+    var p = S.pendingRound;
+    if (!p || !p.items || !p.items.length || p.phase === 'done') return null;
+    var items = p.items.map(function (x) {
+      var q = window.YW_Q_BY_ID[x.q];
+      return q ? { q: q, isReview: !!x.isReview } : null;
+    }).filter(Boolean);
+    if (!items.length) return null;
+    return {
+      spec: p.spec || {}, label: p.label || '练习', note: p.note || '',
+      mode: p.mode || 'daily', items: items,
+      idx: Math.min(p.idx || 0, items.length - 1),
+      results: (p.results || []).slice(0, items.length),
+      selected: p.selected,
+      phase: p.phase === 'feedback' ? 'feedback' : 'ask',
+    };
+  }
+  function clearRound() { S.pendingRound = null; persist(); }
+  function setDigScope(u, l) {
+    S.digUnit = Number(u); S.digLesson = Number(l);
+    return persist();
+  }
+
   function exportAll() {
     return { v: 2, exportedFrom: window.YW_EDITION, root: root };
   }
@@ -470,6 +521,7 @@
     classify: classify, dueWrong: dueWrong, recordAnswer: recordAnswer,
     buildDaySnapshot: buildDaySnapshot, finalizeDay: finalizeDay, markSynced: markSynced,
     applySnapshot: applySnapshot, pickRound: pickRound, buildRound: buildRound,
+    saveRound: saveRound, loadRound: loadRound, clearRound: clearRound, setDigScope: setDigScope,
     exportAll: exportAll, importAll: importAll, resetLocal: resetLocal,
     isFallback: function () { return useLS; },
     profileList: profileList, switchProfile: switchProfile, createProfile: createProfile,

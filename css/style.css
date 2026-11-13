@@ -242,6 +242,10 @@ mark.focus { background: var(--amber); color: var(--ink); padding: 0 2px; font-w
 }
 .no-anim * { transition: none !important; animation: none !important; }
 
+/* 未完成待办 */
+.todo-card { border-color: var(--amber-d); background: #fffaeb; }
+.todo-card .q-meta { background: var(--amber); border-color: var(--amber-d); }
+
 /* 使用者档案 */
 .who-btn { background: none; border: 0; padding: 0; text-align: left; font-size: 12px; color: var(--grass-dd); text-decoration: underline dotted; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
 .who-btn #who-name { font-weight: 700; }

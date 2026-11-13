@@ -156,6 +156,9 @@
 
   /* ---------------- 练习闭环 ---------------- */
   function startRound(spec) {
+    // 已有未完成的这一趟时不静默覆盖，先让使用者决定
+    if (St.loadRound() && !window.confirm('还有一趟没做完，要放弃它、重新开始吗？')) return;
+    St.clearRound();
     var r = St.buildRound(spec);
     if (!r.items.length) { toast('这个范围里还没有题目，换个范围试试'); return; }
     round = {
@@ -163,6 +166,7 @@
       idx: 0, selected: null, phase: 'ask', results: [],
     };
     tab = 'practice';
+    St.saveRound(round);
     closeOverlay();
     render();
     window.scrollTo(0, 0);
@@ -179,18 +183,59 @@
     var tower = '';
     var shown = Math.min(s.blocks, 20);
     for (var i = 0; i < 20; i++) tower += '<span class="blk' + (i < shown ? '' : ' dim') + '"></span>';
+
+    // 做到一半的这一趟：待办条，刷新或换设备回来都能接着做
+    var pending = St.loadRound();
+    var todo = '';
+    if (pending) {
+      var doneCount = pending.results.length;
+      var dots = pending.items.map(function (x, i) {
+        var c = 'dot';
+        if (i < doneCount) c += pending.results[i].correct ? ' done' : ' wrong';
+        else if (i === pending.idx) c += ' now';
+        return '<span class="' + c + '"></span>';
+      }).join('');
+      todo = [
+        '<div class="card todo-card">',
+          '<span class="q-meta">未完成 · 待办</span>',
+          '<h3>', esc(pending.label), ' 还差 ', pending.items.length - doneCount, ' 块</h3>',
+          '<p class="muted">已经做到第 ', Math.min(doneCount + 1, pending.items.length), ' / ',
+            pending.items.length, ' 块，随时可以接着挖完。</p>',
+          '<div class="round-dots" style="margin:10px 0">', dots, '</div>',
+          '<div class="btn-row">',
+            '<button class="btn primary" data-action="resume-round">接着做完</button>',
+            '<button class="btn ghost" data-action="drop-round">放弃这一趟</button>',
+          '</div>',
+        '</div>',
+      ].join('');
+    }
+
+    var unitSel = window.YW_UNITS.map(function (u) {
+      return '<option value="' + u.id + '"' + (s.digUnit === u.id ? ' selected' : '') +
+             '>第 ' + u.id + ' 单元 · ' + esc(u.name) + '</option>';
+    }).join('');
+    var curUnit = window.YW_UNITS.filter(function (u) { return u.id === s.digUnit; })[0] || window.YW_UNITS[0];
+    var lessonSel = '<option value="0"' + (!s.digLesson ? ' selected' : '') + '>整个单元（不指定课）</option>' +
+      curUnit.lessons.map(function (l) {
+        return '<option value="' + l.n + '"' + (s.digLesson === l.n ? ' selected' : '') +
+               '>第 ' + l.n + ' 课 · ' + esc(l.t) + '</option>';
+      }).join('');
+
     view.innerHTML = [
       '<div class="section-title"><h2>今天的挖掘</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
+      todo,
       '<div class="card">',
-        '<span class="q-meta">当前进度 · 第 ', s.progress.unit, ' 单元 · 第 ', s.progress.lesson, ' 课</span>',
-        '<h2>去字块大陆挖一趟</h2>',
-        '<p class="muted">5 道小题，做完垒一块方块。没有倒计时，看清楚再交。</p>',
+        '<h2>今天挖哪一块</h2>',
+        '<p class="muted">选好单元和具体第几课，这一趟就优先出这部分的题目。</p>',
+        '<label class="field" style="margin-top:10px"><span>单元</span><select id="dig-unit">', unitSel, '</select></label>',
+        '<label class="field"><span>具体第几课</span><select id="dig-lesson">', lessonSel, '</select></label>',
         '<div class="stat-row">',
-          '<div class="stat-box"><b>', today.attempts, '</b><span>今日作答题数</span></div>',
+          '<div class="stat-box"><b>', today.attempts, '</b><span>今日作答</span></div>',
           '<div class="stat-box"><b>', today.correct, '</b><span>答对</span></div>',
           '<div class="stat-box"><b>', today.careless, '</b><span>看错了</span></div>',
         '</div>',
-        '<button class="btn primary wide" data-action="start-daily">开始这一趟</button>',
+        '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 块）</button>',
+        '<p class="tiny" style="margin-top:8px">没有倒计时；答错才会用巡查镜复盘。做到一半会自动存成待办。</p>',
       '</div>',
       '<div class="card"><h3>建造塔</h3><div class="tower">', tower, '</div>',
         '<p class="tiny">每答对一题垒一块，攒够 20 块升一级。中断了也不会清零。</p></div>',
@@ -248,29 +293,29 @@
         '<div class="options">', opts, '</div>',
         '<div class="action-bar">',
           fb ? '<button class="btn primary wide" data-action="next">' + (round.idx + 1 >= round.items.length ? '看这一趟的结果' : '下一块') + '</button>'
-             : '<button class="btn primary wide" data-action="mirror"' + (round.selected === null ? ' disabled' : '') + '>先去巡查镜看一眼</button>',
+             : '<button class="btn primary wide" data-action="submit"' + (round.selected === null ? ' disabled' : '') + '>确认提交</button>',
         '</div>',
       '</div>',
       '<p class="tiny" style="text-align:center">', esc(round.note), '</p>',
     ].join('');
   }
 
-  function openMirror() {
-    var it = round.items[round.idx], q = it.q, sel = round.selected;
+  function openMirror(last) {
+    var q = round.items[round.idx].q;
+    var sel = last.selected, ans = q.answer;
     overlay([
-      '<h2>巡查镜</h2>',
-      '<p class="muted">别急着交。把下面几处逐字看一遍，再按确认。</p>',
+      '<h2>巡查镜 · 这块没挖对</h2>',
+      '<p class="muted">别急着翻篇，用镜子看看差在哪一个字。</p>',
       '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
-      '<div class="mirror-pick">你选的是：<b>', 'ABCD'[sel], '. ', esc(q.options[sel]), '</b></div>',
+      '<div class="mirror-pick">你选了 <b>', 'ABCD'[sel], '. ', esc(q.options[sel]),
+        '</b>　正确的是 <b>', 'ABCD'[ans], '. ', esc(q.options[ans]), '</b></div>',
       '<ul class="check-list">',
-        '<li>题目问的是「选对的」还是「选不对的」？</li>',
-        '<li>四个选项都读过了吗？有没有只看了第一个就点？</li>',
+        '<li>题目问的是「选对的」还是「选不对的」？有没有看反？</li>',
+        '<li>四个选项都读完了吗？是不是只看了第一个就点？</li>',
         '<li>形近字、多音字、的 / 地 / 得、标点，逐字对一遍</li>',
       '</ul>',
-      '<div class="btn-row">',
-        '<button class="btn ghost" data-action="mirror-back">回去改改</button>',
-        '<button class="btn primary" data-action="submit">确认提交</button>',
-      '</div>',
+      '<p class="muted">', esc((window.YW_KP[q.kp] || {}).hint || ''), '</p>',
+      '<button class="btn primary wide" data-action="mirror-back">我看明白了</button>',
     ].join(''));
   }
 
@@ -282,14 +327,16 @@
     var payload = St.recordAnswer(q, sel, correct, it.isReview);
     round.results.push({ qid: q.id, correct: correct, type: type, selected: sel });
     round.phase = 'feedback';
-    closeOverlay();
+    St.saveRound(round);
     render();
+    // 只有答错才弹巡查镜复盘；答对不打断节奏
+    if (!correct) openMirror(round.results[round.results.length - 1]);
     syncDate(payload);
   }
 
   function nextQuestion() {
-    if (round.idx + 1 >= round.items.length) { round.phase = 'done'; }
-    else { round.idx += 1; round.selected = null; round.phase = 'ask'; }
+    if (round.idx + 1 >= round.items.length) { round.phase = 'done'; St.clearRound(); }
+    else { round.idx += 1; round.selected = null; round.phase = 'ask'; St.saveRound(round); }
     render();
     window.scrollTo(0, 0);
   }
@@ -569,7 +616,14 @@
         }
         break;
       }
-      case 'start-daily': startRound({ mode: 'daily', count: 5 }); break;
+      case 'start-daily': startRound({ mode: 'daily', count: 5, unit: S().digUnit, lesson: S().digLesson }); break;
+      case 'resume-round': {
+        var pr = St.loadRound();
+        if (!pr) { toast('这一趟已经不在了'); render(); break; }
+        round = pr; closeOverlay(); render(); window.scrollTo(0, 0);
+        break;
+      }
+      case 'drop-round': St.clearRound(); render(); toast('已放弃这一趟'); break;
       case 'start-past': startRound({ mode: 'past', count: 6, grade: Number(d.grade) || 0 }); break;
       case 'start-mode':
         startRound({ mode: d.mode, count: d.mode === 'full' ? 10 : 8,
@@ -583,9 +637,8 @@
       case 'start-exam': startRound({ mode: 'exam', examKey: d.key }); break;
       case 'opt':
         if (!round || round.phase !== 'ask') break;
-        round.selected = Number(d.idx); render();
+        round.selected = Number(d.idx); St.saveRound(round); render();
         break;
-      case 'mirror': openMirror(); break;
       case 'mirror-back': closeOverlay(); break;
       case 'submit': submitAnswer(); break;
       case 'next': nextQuestion(); break;
@@ -595,7 +648,12 @@
         startRound({ mode: 'topic', count: 1, kp: '' });
         if (round) {
           var q = window.YW_Q_BY_ID[d.qid];
-          if (q) { round.items = [{ q: q, isReview: true }]; round.label = '重做这道'; round.count = 1; render(); }
+          if (q) {
+            round.items = [{ q: q, isReview: true }];
+            round.label = '重做这道';
+            round.idx = 0; round.results = []; round.selected = null; round.phase = 'ask';
+            St.saveRound(round); render();
+          }
         }
         break;
       case 'past-grade': ui.pastGrade = Number(d.grade); render(); break;
@@ -674,6 +732,14 @@
       await St.setProgress(document.getElementById('progress-unit').value,
                            document.getElementById('progress-lesson').value);
       render(); toast('进度已更新');
+    } else if (t.id === 'dig-unit') {
+      var du = Number(t.value);
+      var duObj = window.YW_UNITS.filter(function (x) { return x.id === du; })[0] || window.YW_UNITS[0];
+      await St.setDigScope(du, duObj.lessons[0].n);
+      render(); toast('已选到第 ' + du + ' 单元');
+    } else if (t.id === 'dig-lesson') {
+      await St.setDigScope(S().digUnit, Number(t.value));
+      render();
     } else if (t.id === 'import-file' && t.files && t.files[0]) {
       try {
         var text = await t.files[0].text();
