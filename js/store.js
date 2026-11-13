@@ -39,6 +39,7 @@
       examScope: { midterm: [1, 2, 3, 4], final: [1, 2, 3, 4, 5, 6, 7, 8] },
       blocks: 0, level: 1, streak: 0, lastActiveDate: null,
       noAnim: false,
+      lastRun: null,   // 上一趟的结果，只存本机，用于回首页后展示，不进云端快照
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
       saves: {}, pendingSync: [],
     };
@@ -528,6 +529,18 @@
     };
   }
   function clearRound() { S.pendingRound = null; persist(); }
+
+  // 上一趟结果：结算完即回首页，结果作为一条可收起的条留在首页顶部
+  function setLastRun(r) {
+    S.lastRun = r ? {
+      label: r.label || '练习', mode: r.mode || 'daily', spec: r.spec || {},
+      note: r.note || '', at: r.at || todayKey(),
+      results: (r.results || []).map(function (x) {
+        return { qid: x.qid, correct: !!x.correct, type: x.type || '' };
+      }),
+    } : null;
+    return persist();
+  }
   function setDigScope(u, l) {
     var unit = validUnit(u) ? Number(u) : S.progress.unit;
     S.digUnit = unit;
@@ -569,6 +582,7 @@
     buildDaySnapshot: buildDaySnapshot, finalizeDay: finalizeDay, markSynced: markSynced,
     applySnapshot: applySnapshot, pickRound: pickRound, buildRound: buildRound,
     saveRound: saveRound, loadRound: loadRound, clearRound: clearRound, setDigScope: setDigScope,
+    setLastRun: setLastRun,
     exportAll: exportAll, importAll: importAll, resetLocal: resetLocal,
     isFallback: function () { return useLS; },
     profileList: profileList, switchProfile: switchProfile, createProfile: createProfile,

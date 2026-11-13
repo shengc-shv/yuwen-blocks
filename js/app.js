@@ -68,21 +68,34 @@
       return '<span class="' + c + '" title="' + MOB_NAMES[kind] + '">' + mobSvg(kind) + '</span>';
     }).join('');
   }
-  function mobTower(shown) {
-    var out = '';
-    for (var i = 0; i < 20; i++) {
-      var kind = MOB_KINDS[i % 3];
-      out += '<span class="mob-blk' + (i < shown ? '' : ' dim') + '" title="' + MOB_NAMES[kind] + '">' +
-             mobSvg(kind) + '</span>';
+  // 伙伴塔：一格一位伙伴，固定 4×5 网格（永远对得齐，不会参差）。
+  // 重要：进度按「当前这一座塔」算，用 blocks % 20，不能用 blocks 本身，
+  // 否则累计答对超过 20 题以后塔就永远停在满格不动了。
+  var TOWER_PER = 20;
+  function towerCard() {
+    var s = S();
+    var filled = s.blocks % TOWER_PER;
+    var left = TOWER_PER - filled;
+    var slots = '';
+    for (var i = 0; i < TOWER_PER; i++) {
+      var kind = MOB_KINDS[i % 3], on = i < filled;
+      slots += '<span class="tower-slot' + (on ? ' on' : '') + (on && i === filled - 1 ? ' latest' : '') +
+               '" title="' + (on ? MOB_NAMES[kind] + ' 已入住' : '空位，答对一题就有伙伴搬进来') + '">' +
+               mobSvg(kind) + '</span>';
     }
-    return out;
+    return [
+      '<div class="card">',
+        '<div class="tower-top">',
+          '<h3>伙伴塔</h3>',
+          '<span class="tower-badge">第 ', s.level, ' 座 · ', filled, ' / ', TOWER_PER, '</span>',
+        '</div>',
+        '<div class="tower-grid">', slots, '</div>',
+        '<div class="tower-bar"><i style="width:', Math.round(filled / TOWER_PER * 100), '%"></i></div>',
+        '<p class="tiny"><b>再答对 ', left, ' 题</b>，这座塔就住满、升一级，换一座新塔开工。之前住满的塔都算在等级里，累计已有 ',
+          s.blocks, ' 位伙伴。</p>',
+      '</div>',
+    ].join('');
   }
-  function mobLegend() {
-    return '<p class="mob-legend">' + MOB_KINDS.map(function (k) {
-      return '<span>' + mobSvg(k) + MOB_NAMES[k] + '</span>';
-    }).join('') + '</p>';
-  }
-
   function overlay(html) {
     closeOverlay();
     var d = document.createElement('div');
@@ -330,13 +343,45 @@
 
   function renderPractice() {
     if (!round) return renderPracticeHome();
-    if (round.phase === 'done') return renderResult();
     return renderQuestion();
+  }
+
+  // 上一趟的结果条：结算完直接回首页，结果留成一条可收起的通报，
+  // 不再把用户卡在「再来一趟」的结算页上。
+  function runCard(run) {
+    if (!run || !run.results || !run.results.length) return '';
+    var rs = run.results;
+    var ok = rs.filter(function (r) { return r.correct; }).length;
+    var cnt = { careless: 0, confused: 0, unknown: 0 };
+    rs.forEach(function (r) { if (r.type && cnt[r.type] !== undefined) cnt[r.type] += 1; });
+    var wrong = rs.length - ok;
+    var mobs = rs.map(function (r, i) {
+      return '<span class="mob-slot ' + (r.correct ? 'done' : 'wrong') + '" style="--i:' + i + '">' +
+             mobSvg(MOB_KINDS[i % 3]) + '</span>';
+    }).join('');
+    var detail = wrong
+      ? '看错了 ' + cnt.careless + ' · 记混了 ' + cnt.confused + ' · 还没学会 ' + cnt.unknown + '，都进错题集了。'
+      : '全对！这一趟没有错题。';
+    return [
+      '<div class="card run-card">',
+        '<div class="run-top">',
+          '<span class="q-meta">这一趟 · 挖完了</span>',
+          '<button class="run-x" data-action="run-dismiss" aria-label="收起这条结果" type="button">×</button>',
+        '</div>',
+        '<h3>', esc(run.label), '　', rs.length, ' 题 · 对 ', ok, '</h3>',
+        '<div class="run-mobs">', mobs, '</div>',
+        '<p class="muted">', detail, '</p>',
+        '<div class="btn-row" style="margin-top:10px">',
+          '<button class="btn sm primary" data-action="again">再挖一趟（同样范围）</button>',
+          wrong ? '<button class="btn sm ghost" data-action="go-wrong">看错题</button>' : '',
+          run.mode === 'exam' ? '<button class="btn sm" data-action="run-report">这次的分析</button>' : '',
+        '</div>',
+      '</div>',
+    ].join('');
   }
 
   function renderPracticeHome() {
     var s = S(), d = St.todayKey(), today = s.daily[d] || { attempts: 0, correct: 0, careless: 0 };
-    var tower = mobTower(Math.min(s.blocks, 20));
 
     // 做到一半的这一趟：待办条，刷新或换设备回来都能接着做
     var pending = St.loadRound();
@@ -372,6 +417,7 @@
 
     view.innerHTML = [
       '<div class="section-title"><h2>今天的挖掘</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
+      runCard(s.lastRun),
       todo,
       '<div class="card">',
         '<h2>今天挖哪一块</h2>',
@@ -386,8 +432,7 @@
         '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 题）</button>',
         '<p class="tiny" style="margin-top:8px">没有倒计时；答错才会用巡查镜复盘。做到一半会自动存成待办。</p>',
       '</div>',
-      '<div class="card"><h3>伙伴塔</h3><div class="tower">', tower, '</div>', mobLegend(),
-        '<p class="tiny">每答对一题，就有一位新伙伴住进塔里；攒够 20 位升一级。中断了也不会清零。</p></div>',
+      towerCard(),
       '<p class="tiny" style="text-align:center">到期的错题会自己冒出来，混进这一趟里。</p>',
     ].join('');
   }
@@ -503,7 +548,9 @@
     if (sel === null) return;
     var correct = sel === q.answer;
     var type = correct ? '' : St.classify(q, sel);
+    var lvBefore = S().level;
     var payload = St.recordAnswer(q, sel, correct, it.isReview);
+    var leveled = S().level > lvBefore;
     var last = { qid: q.id, correct: correct, type: type, selected: sel };
     round.results.push(last);
     round.phase = 'ask';
@@ -511,63 +558,52 @@
     advance();
     // 只有答错才用快照复盘刚才那题；下一块已经在下面等着了
     if (!correct) openMirror(last, q);
+    else if (leveled) toast('第 ' + (S().level - 1) + ' 座塔住满了！升到 Lv.' + S().level + '，新塔开工');
     else toast('答对了，来了一位新伙伴');
     syncDate(payload);
   }
 
   function advance() {
-    if (round.idx + 1 >= round.items.length) { round.phase = 'done'; St.clearRound(); }
-    else { round.idx += 1; round.selected = null; round.phase = 'ask'; St.saveRound(round); }
+    if (round.idx + 1 >= round.items.length) {
+      // 结算完不留「完成页」：把结果记一条，直接回首页重新选
+      St.setLastRun({
+        label: round.label, mode: round.mode, spec: round.spec || {}, note: round.note || '',
+        results: round.results.slice(), at: St.todayKey(),
+      });
+      round = null;
+      St.clearRound();
+    } else { round.idx += 1; round.selected = null; round.phase = 'ask'; St.saveRound(round); }
     render();
     window.scrollTo(0, 0);
   }
 
-  function renderResult() {
-    var rs = round.results;
+  // 「这次的分析」：专项/整卷才看得到逐项报告，日常 5 题不必打扰
+  function openRunReport(run) {
+    var rs = run.results;
     var ok = rs.filter(function (r) { return r.correct; }).length;
-    var careless = rs.filter(function (r) { return r.type === 'careless'; }).length;
-    var confused = rs.filter(function (r) { return r.type === 'confused'; }).length;
-    var unknown = rs.filter(function (r) { return r.type === 'unknown'; }).length;
-    var tower = mobTower(S().blocks % 20 || (ok ? 20 : 0));
-    var report = '';
-    if (round.mode === 'exam') {
-      var byKp = {};
-      rs.forEach(function (r) {
-        if (r.correct) return;
-        var q = window.YW_Q_BY_ID[r.qid];
-        if (q) byKp[q.kp] = (byKp[q.kp] || 0) + 1;
-      });
-      var weak = Object.keys(byKp).sort(function (a, b) { return byKp[b] - byKp[a]; }).slice(0, 3);
-      report = [
-        '<div class="card"><h3>本次专项报告</h3>',
-        '<div class="report-line"><span>正确率</span><b>', Math.round(ok / rs.length * 100), '%（', ok, '/', rs.length, '）</b></div>',
-        '<div class="report-line"><span>看错了</span><b>', careless, ' 题</b></div>',
-        '<div class="report-line"><span>记混了</span><b>', confused, ' 题</b></div>',
-        '<div class="report-line"><span>还没学会</span><b>', unknown, ' 题</b></div>',
-        '<p class="muted" style="margin-top:10px">建议专项：',
+    var cnt = { careless: 0, confused: 0, unknown: 0 };
+    var byKp = {};
+    rs.forEach(function (r) {
+      if (r.correct) return;
+      if (r.type && cnt[r.type] !== undefined) cnt[r.type] += 1;
+      var q = window.YW_Q_BY_ID[r.qid];
+      if (q) byKp[q.kp] = (byKp[q.kp] || 0) + 1;
+    });
+    var weak = Object.keys(byKp).sort(function (a, b) { return byKp[b] - byKp[a]; }).slice(0, 3);
+    overlay([
+      '<h2>', esc(run.label), ' · 这次的分析</h2>',
+      '<p class="muted">', esc(run.at), ' · 共 ', rs.length, ' 题</p>',
+      '<div class="report-line"><span>正确率</span><b>', Math.round(ok / rs.length * 100), '%（', ok, '/', rs.length, '）</b></div>',
+      '<div class="report-line"><span>看错了</span><b>', cnt.careless, ' 题</b></div>',
+      '<div class="report-line"><span>记混了</span><b>', cnt.confused, ' 题</b></div>',
+      '<div class="report-line"><span>还没学会</span><b>', cnt.unknown, ' 题</b></div>',
+      '<p class="muted" style="margin-top:10px">建议专项：',
         weak.length ? weak.map(kpName).join('、') : '没有明显薄弱点，保持就好', '</p>',
-        weak.length ? '<button class="btn sm" data-action="start-mode" data-mode="topic" data-kp="' + esc(weak[0]) + '">练一下' + esc(kpName(weak[0])) + '</button>' : '',
-        '</div>',
-      ].join('');
-    }
-    view.innerHTML = [
-      '<div class="section-title"><h2>', esc(round.label), ' · 完成</h2><span class="tiny">', esc(St.todayKey()), '</span></div>',
-      '<div class="card" style="text-align:center">',
-        '<h2>这一趟挖完了</h2>',
-        '<div class="tower">', tower, '</div>', mobLegend(),
-        '<div class="stat-row">',
-          '<div class="stat-box"><b>', rs.length, '</b><span>共做</span></div>',
-          '<div class="stat-box"><b>', ok, '</b><span>答对</span></div>',
-          '<div class="stat-box"><b>', careless, '</b><span>看错了</span></div>',
-        '</div>',
-        '<div class="btn-row" style="margin-top:12px">',
-          '<button class="btn primary" data-action="again">再来一趟</button>',
-          '<button class="btn ghost" data-action="go-wrong">看看错题</button>',
-        '</div>',
+      '<div class="btn-row" style="margin-top:12px">',
+        weak.length ? '<button class="btn primary" data-action="start-mode" data-mode="topic" data-kp="' + esc(weak[0]) + '">练一下' + esc(kpName(weak[0])) + '</button>' : '',
+        '<button class="btn ghost" data-action="mirror-back">知道了</button>',
       '</div>',
-      report,
-      '<p class="tiny" style="text-align:center">答错的题已自动收进错题集，1 / 3 / 7 天后会再冒出来。</p>',
-    ].join('');
+    ].join(''));
   }
 
   /* ---------------- 回忆录 · 复习中心 ---------------- */
@@ -861,7 +897,14 @@
       }
       case 'submit': submitAnswer(); break;
       case 'next': advance(); break;
-      case 'again': startRound(round.spec); break;
+      case 'again': {
+        var lr = S().lastRun;
+        if (!lr || !lr.spec) { toast('先在上面选个范围'); break; }
+        startRound(Object.assign({}, lr.spec));
+        break;
+      }
+      case 'run-report': if (S().lastRun) openRunReport(S().lastRun); break;
+      case 'run-dismiss': await St.setLastRun(null); render(); break;
       case 'go-wrong': round = null; tab = 'wrong'; render(); break;
       case 'redo':
         startRound({ mode: 'topic', count: 1, kp: '' });

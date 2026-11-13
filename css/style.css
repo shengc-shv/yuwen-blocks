@@ -115,7 +115,7 @@ h1, h2, h3, p { margin: 0; }
 .mob-sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
 .mob-head { display: block; width: 100%; height: 100%; image-rendering: pixelated; }
 .round-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; font-size: 13px; }
-.round-dots { display: flex; gap: 5px; align-items: center; }
+.round-dots { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
 .mob-slot {
   display: inline-block; width: 26px; height: 26px; flex: none;
   padding: 1px; box-sizing: border-box;
@@ -127,9 +127,6 @@ h1, h2, h3, p { margin: 0; }
 .mob-slot.wrong .mob-head { filter: grayscale(.55); }
 .mob-slot.now { border-color: var(--amber-d); box-shadow: 0 0 0 2px var(--amber); }
 .mob-slot.now .mob-head { filter: grayscale(1); opacity: .6; }
-.mob-legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 14px; margin: 2px 0 10px; font-size: 12px; color: var(--ink-2); }
-.mob-legend span { display: inline-flex; align-items: center; gap: 4px; }
-.mob-legend .mob-head { width: 18px; height: 18px; }
 .q-source { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 9px; padding-bottom: 8px; border-bottom: 2px dashed var(--stone-l); }
 .q-source b { font-size: 14px; color: var(--dirt-d); }
 .q-source span { font-size: 11px; color: var(--ink-3); }
@@ -191,14 +188,45 @@ mark.focus { background: var(--amber); color: var(--ink); padding: 0 2px; font-w
 .feedback strong { display: block; font-size: 16px; margin-bottom: 4px; }
 .feedback p { font-size: 14px; }
 .err-tag { display: inline-block; padding: 1px 8px; font-size: 12px; border: 2px solid var(--amber-d); background: var(--amber); margin-top: 8px; }
-.tower { display: flex; flex-wrap: wrap; gap: 4px; align-items: flex-end; justify-content: center; padding: 12px 0 6px; min-height: 92px; }
-.mob-blk {
-  width: 34px; height: 34px; padding: 2px; box-sizing: border-box;
-  border: 2px solid var(--grass-dd); background: var(--card);
-  box-shadow: 2px 2px 0 var(--dirt-d);
+/* 伙伴塔 v2：固定 4×5 网格，一格一位，行行对齐 */
+.tower-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 2px; }
+.tower-top h3 { margin: 0; }
+.tower-badge {
+  flex: none; padding: 1px 8px; font-size: 12px; font-weight: 700;
+  background: var(--amber); border: 2px solid var(--amber-d);
 }
-.mob-blk.dim { border-color: var(--stone); background: var(--paper-2); box-shadow: none; }
-.mob-blk.dim .mob-head { filter: grayscale(1); opacity: .25; }
+.tower-grid {
+  display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;
+  max-width: 360px; margin: 10px auto 8px;
+}
+.tower-slot {
+  display: flex; align-items: center; justify-content: center;
+  height: 46px; padding: 3px; box-sizing: border-box;
+  border: 2px solid var(--stone-l); background: var(--paper-2);
+}
+.tower-slot .mob-head { width: 100%; height: 100%; }
+.tower-slot:not(.on) .mob-head { filter: grayscale(1); opacity: .16; }
+.tower-slot.on { border-color: var(--grass-dd); background: var(--grass-l); }
+.tower-slot.latest { border-color: var(--amber-d); background: #fffaeb; box-shadow: 0 0 0 2px var(--amber); }
+.tower-bar { height: 12px; background: var(--stone-l); border: 2px solid var(--line); margin: 0 0 8px; }
+.tower-bar i { display: block; height: 100%; background: var(--grass); transition: width .3s ease; }
+
+/* 上一趟结果条：结算完回首页时留在顶部，可收起 */
+.run-card { border-color: var(--amber-d); background: #fffaeb; }
+.run-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.run-top .q-meta { margin-bottom: 0; }
+.run-x {
+  flex: none; width: 34px; height: 34px; padding: 0; line-height: 1;
+  font-size: 18px; color: var(--ink-2);
+  border: 2px solid var(--line); background: var(--card);
+}
+.run-card h3 { margin: 6px 0 0; }
+.run-mobs { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 6px; }
+.run-mobs .mob-slot { width: 30px; height: 30px; animation: popIn .34s ease both; animation-delay: calc(var(--i, 0) * 70ms); }
+@keyframes popIn {
+  from { transform: translateY(6px) scale(.7); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
 .stat-row { display: flex; gap: 8px; margin: 12px 0; }
 .stat-box { flex: 1; text-align: center; background: var(--paper-2); border: 2px solid var(--line); padding: 8px 4px; }
 .stat-box b { display: block; font-size: 20px; }
