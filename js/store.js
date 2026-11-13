@@ -100,12 +100,35 @@
     return writeChain;
   }
 
+  function validUnit(id) {
+    return (window.YW_UNITS || []).some(function (u) { return u.id === Number(id); });
+  }
+  function unitById(id) {
+    return (window.YW_UNITS || []).filter(function (u) { return u.id === Number(id); })[0]
+      || (window.YW_UNITS || [])[0] || null;
+  }
+  // 任何入口都把「不属于当前单元的课号」纠正到该单元第一课，杜绝下拉显示与实际取值不一致
+  function normalizeLesson(unitId, lesson, allowZero) {
+    var u = unitById(unitId);
+    if (!u || !u.lessons || !u.lessons.length) return lesson;
+    if (allowZero && Number(lesson) === 0) return 0;
+    return u.lessons.some(function (l) { return l.n === Number(lesson); })
+      ? Number(lesson) : u.lessons[0].n;
+  }
+
   function normalizeProfile(p, id, name) {
     var d = profileDefaults(name);
     Object.keys(d).forEach(function (k) { if (p[k] === undefined) p[k] = d[k]; });
     p.id = id;
     if (!p.spaceId) p.spaceId = id;
     if (!p.name) p.name = name || '学习者';
+    p.progress = p.progress || d.progress;
+    p.progress.unit = Number(p.progress.unit);
+    if (!validUnit(p.progress.unit)) p.progress.unit = 1;
+    p.digUnit = Number(p.digUnit);
+    if (!validUnit(p.digUnit)) p.digUnit = p.progress.unit;
+    p.digLesson = normalizeLesson(p.digUnit, p.digLesson, true);
+    p.progress.lesson = normalizeLesson(p.progress.unit, p.progress.lesson, false);
     return p;
   }
 
@@ -440,10 +463,11 @@
     await persist();
     return p;
   }
-  async function renameProfile(name) {
+  async function renameProfile(name, id) {
     var n = String(name || '').trim().slice(0, 12);
     if (!n) throw new Error('名字不能为空');
-    S.name = n;
+    var target = (id && root.profiles[id]) ? root.profiles[id] : S;
+    target.name = n;
     await persist();
   }
   async function deleteProfile(id) {
@@ -489,7 +513,14 @@
   }
   function clearRound() { S.pendingRound = null; persist(); }
   function setDigScope(u, l) {
-    S.digUnit = Number(u); S.digLesson = Number(l);
+    var unit = validUnit(u) ? Number(u) : S.progress.unit;
+    S.digUnit = unit;
+    S.digLesson = normalizeLesson(unit, l, true);
+    return persist();
+  }
+  function setProgress(u, l) {
+    var unit = validUnit(u) ? Number(u) : 1;
+    S.progress = { unit: unit, lesson: normalizeLesson(unit, l, false) };
     return persist();
   }
 
@@ -528,7 +559,7 @@
     renameProfile: renameProfile, deleteProfile: deleteProfile,
     profileId: function () { return S.id; }, profileName: function () { return S.name; },
     setSpaceId: function (code) { S.spaceId = String(code || '').trim(); return persist(); },
-    setProgress: function (u, l) { S.progress = { unit: Number(u), lesson: Number(l) }; return persist(); },
+    setProgress: setProgress,
     setGrade: function (g, t) { S.grade = Number(g); S.term = t || S.term; return persist(); },
     setExamScope: function (key, units) { S.examScope[key] = units; return persist(); },
     pastCount: function () { return window.YW_pastQuestions(S.grade).length; },

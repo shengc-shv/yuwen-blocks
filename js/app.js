@@ -39,6 +39,39 @@
     document.body.appendChild(d);
   }
   function closeOverlay() { var o = document.getElementById('yw-overlay'); if (o) o.remove(); }
+
+  var renameTargetId = null;
+  var pendingConfirm = null;
+  var pendingStart = null;
+
+  // 应用内确认框：不依赖 window.confirm（嵌入式预览里原生弹窗会被禁用）
+  function confirmSheet(title, msg, okLabel, run) {
+    pendingConfirm = run;
+    overlay([
+      '<h2>', esc(title), '</h2>',
+      '<p class="muted">', esc(msg), '</p>',
+      '<div class="btn-row" style="margin-top:14px">',
+        '<button class="btn ghost" data-action="confirm-cancel">取消</button>',
+        '<button class="btn danger" data-action="confirm-ok">', esc(okLabel), '</button>',
+      '</div>',
+    ].join(''));
+  }
+
+  // 应用内改名表单：不依赖 window.prompt，可对任意一个使用者改名
+  function renameSheet(id) {
+    renameTargetId = id || St.profileId();
+    var p = St.profileList().filter(function (x) { return x.id === renameTargetId; })[0];
+    overlay([
+      '<h2>给使用者改名</h2>',
+      '<p class="muted">名字只存在本机，不会上传到云端。</p>',
+      '<label class="field"><span>名字（最多 12 个字）</span>',
+        '<input id="rename-input" maxlength="12" value="', esc(p ? p.name : ''), '" /></label>',
+      '<div class="btn-row">',
+        '<button class="btn ghost" data-action="open-profiles">取消</button>',
+        '<button class="btn primary" data-action="rename-save">保存</button>',
+      '</div>',
+    ].join(''));
+  }
   function download(name, obj) {
     var blob = new Blob([JSON.stringify(obj, null, 2)], { type: 'application/json' });
     var a = document.createElement('a');
@@ -125,9 +158,8 @@
         '<div class="p-body"><strong>' + esc(p.name) + (p.active ? ' · 当前' : '') + '</strong>' +
         '<span>Lv.' + p.level + ' · ' + p.blocks + ' 方块 · ' + p.wrong + ' 道错题 · 第 ' +
         (p.progress ? p.progress.unit : 1) + ' 单元</span></div>' +
-        (p.active
-          ? '<button class="p-mini" data-action="profile-rename">改名</button>'
-          : '<button class="p-mini" data-action="profile-switch" data-id="' + p.id + '">切换</button>') +
+        (p.active ? '' : '<button class="p-mini" data-action="profile-switch" data-id="' + p.id + '">切换</button>') +
+        '<button class="p-mini" data-action="profile-rename" data-id="' + p.id + '">改名</button>' +
         '<button class="p-mini" data-action="profile-delete" data-id="' + p.id + '">删除</button>' +
       '</div>';
     }).join('');
@@ -156,8 +188,17 @@
 
   /* ---------------- 练习闭环 ---------------- */
   function startRound(spec) {
-    // 已有未完成的这一趟时不静默覆盖，先让使用者决定
-    if (St.loadRound() && !window.confirm('还有一趟没做完，要放弃它、重新开始吗？')) return;
+    // 已有未完成的这一趟时不静默覆盖，改用应用内确认框
+    if (!spec.force && St.loadRound()) {
+      pendingStart = spec;
+      confirmSheet('还有一趟没做完', '要放弃它、重新开始吗？', '放弃并重新开始', function () {
+        var next = Object.assign({}, pendingStart, { force: true });
+        pendingStart = null;
+        startRound(next);
+      });
+      return;
+    }
+    pendingStart = null;
     St.clearRound();
     var r = St.buildRound(spec);
     if (!r.items.length) { toast('这个范围里还没有题目，换个范围试试'); return; }
@@ -292,20 +333,18 @@
         '<div class="q-stem">', esc(q.stem), '</div>',
         '<div class="options">', opts, '</div>',
         '<div class="action-bar">',
-          fb ? '<button class="btn primary wide" data-action="next">' + (round.idx + 1 >= round.items.length ? '看这一趟的结果' : '下一块') + '</button>'
-             : '<button class="btn primary wide" data-action="submit"' + (round.selected === null ? ' disabled' : '') + '>确认提交</button>',
+          '<button class="btn primary wide" data-action="submit"' + (round.selected === null ? ' disabled' : '') + '>确认提交并继续</button>',
         '</div>',
       '</div>',
       '<p class="tiny" style="text-align:center">', esc(round.note), '</p>',
     ].join('');
   }
 
-  function openMirror(last) {
-    var q = round.items[round.idx].q;
+  function openMirror(last, q) {
     var sel = last.selected, ans = q.answer;
     overlay([
       '<h2>巡查镜 · 这块没挖对</h2>',
-      '<p class="muted">别急着翻篇，用镜子看看差在哪一个字。</p>',
+      '<p class="muted">下一块已经准备好了，先用镜子看看差在哪一个字。</p>',
       '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
       '<div class="mirror-pick">你选了 <b>', 'ABCD'[sel], '. ', esc(q.options[sel]),
         '</b>　正确的是 <b>', 'ABCD'[ans], '. ', esc(q.options[ans]), '</b></div>',
@@ -314,8 +353,8 @@
         '<li>四个选项都读完了吗？是不是只看了第一个就点？</li>',
         '<li>形近字、多音字、的 / 地 / 得、标点，逐字对一遍</li>',
       '</ul>',
-      '<p class="muted">', esc((window.YW_KP[q.kp] || {}).hint || ''), '</p>',
-      '<button class="btn primary wide" data-action="mirror-back">我看明白了</button>',
+      '<div class="w-tip" style="margin-bottom:12px">', esc(q.tip), '</div>',
+      '<button class="btn primary wide" data-action="mirror-back">我看明白了，继续</button>',
     ].join(''));
   }
 
@@ -325,16 +364,18 @@
     var correct = sel === q.answer;
     var type = correct ? '' : St.classify(q, sel);
     var payload = St.recordAnswer(q, sel, correct, it.isReview);
-    round.results.push({ qid: q.id, correct: correct, type: type, selected: sel });
-    round.phase = 'feedback';
-    St.saveRound(round);
-    render();
-    // 只有答错才弹巡查镜复盘；答对不打断节奏
-    if (!correct) openMirror(round.results[round.results.length - 1]);
+    var last = { qid: q.id, correct: correct, type: type, selected: sel };
+    round.results.push(last);
+    round.phase = 'ask';
+    // 一次点击即推进：不再停在「下一块」中转页
+    advance();
+    // 只有答错才用快照复盘刚才那题；下一块已经在下面等着了
+    if (!correct) openMirror(last, q);
+    else toast('答对了，垒一块方块');
     syncDate(payload);
   }
 
-  function nextQuestion() {
+  function advance() {
     if (round.idx + 1 >= round.items.length) { round.phase = 'done'; St.clearRound(); }
     else { round.idx += 1; round.selected = null; round.phase = 'ask'; St.saveRound(round); }
     render();
@@ -483,10 +524,9 @@
     var lessons = cur.lessons.map(function (l) {
       return '<div class="lesson-line' + (s.progress.lesson === l.n ? ' now' : '') + '"><span class="n">第 ' + l.n + ' 课</span><span>' + esc(l.t) + '</span></div>';
     }).join('');
-    var lessonSel = window.YW_UNITS.map(function (u) {
-      return u.lessons.map(function (l) {
-        return '<option value="' + l.n + '"' + (s.progress.lesson === l.n ? ' selected' : '') + '>第 ' + l.n + ' 课 · ' + esc(l.t) + '</option>';
-      }).join('');
+    var lessonSel = cur.lessons.map(function (l) {
+      return '<option value="' + l.n + '"' + (s.progress.lesson === l.n ? ' selected' : '') +
+             '>第 ' + l.n + ' 课 · ' + esc(l.t) + '</option>';
     }).join('');
     view.innerHTML = [
       '<div class="section-title"><h2>字块大陆地图</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
@@ -601,21 +641,31 @@
         await afterProfileChange();
         break;
       }
-      case 'profile-rename': {
-        var renamed = window.prompt('给当前使用者起个新名字', St.profileName());
-        if (renamed === null) break;
-        await St.renameProfile(renamed);
-        renderProfileSheet(); render();
+      case 'profile-rename': renameSheet(d.id); break;
+      case 'rename-save': {
+        var rv = (document.getElementById('rename-input') || {}).value || '';
+        if (!rv.trim()) { toast('名字不能为空，请重新输入'); break; }
+        await St.renameProfile(rv, renameTargetId);
+        renderProfileSheet(); render(); toast('名字已更新');
         break;
       }
-      case 'profile-delete': {
-        if (window.confirm('删除这个使用者的全部本地记录？此操作不可撤销，云端存档不会删除。')) {
+      case 'confirm-cancel':
+        pendingConfirm = null; pendingStart = null; closeOverlay();
+        break;
+      case 'confirm-ok': {
+        var run = pendingConfirm;
+        pendingConfirm = null;
+        closeOverlay();
+        if (run) await run();
+        break;
+      }
+      case 'profile-delete':
+        confirmSheet('删除使用者', '会删除这个使用者的全部本地记录，此操作不可撤销；云端存档和其他使用者不受影响。', '删除', async function () {
           await St.deleteProfile(d.id);
           await afterProfileChange();
           toast('已删除该使用者');
-        }
+        });
         break;
-      }
       case 'start-daily': startRound({ mode: 'daily', count: 5, unit: S().digUnit, lesson: S().digLesson }); break;
       case 'resume-round': {
         var pr = St.loadRound();
@@ -641,7 +691,7 @@
         break;
       case 'mirror-back': closeOverlay(); break;
       case 'submit': submitAnswer(); break;
-      case 'next': nextQuestion(); break;
+      case 'next': advance(); break;
       case 'again': startRound(round.spec); break;
       case 'go-wrong': round = null; tab = 'wrong'; render(); break;
       case 'redo':
@@ -706,9 +756,9 @@
       case 'export-all': download('方块语文-全部数据-' + St.todayKey() + '.json', St.exportAll()); toast('已导出'); break;
       case 'import-all': document.getElementById('import-file').click(); break;
       case 'reset-local':
-        if (window.confirm('确定清空「' + St.profileName() + '」的全部本地记录？此操作不可撤销，云端存档和其他使用者不受影响。')) {
+        confirmSheet('清空本地记录', '确定清空「' + St.profileName() + '」的全部本地记录？此操作不可撤销，云端存档和其他使用者不受影响。', '清空', async function () {
           await St.resetLocal(); round = null; render(); toast('该使用者的本地记录已清空');
-        }
+        });
         break;
     }
   }
@@ -728,10 +778,14 @@
       var term = document.getElementById('term-select').value;
       await St.setGrade(g, term); render();
       toast('已切到 ' + g + ' 年级' + term + '册，旧年级内容自动进入忆往昔');
-    } else if (t.id === 'progress-unit' || t.id === 'progress-lesson') {
-      await St.setProgress(document.getElementById('progress-unit').value,
-                           document.getElementById('progress-lesson').value);
-      render(); toast('进度已更新');
+    } else if (t.id === 'progress-unit') {
+      var pu = Number(t.value);
+      var puObj = window.YW_UNITS.filter(function (x) { return x.id === pu; })[0];
+      await St.setProgress(pu, puObj ? puObj.lessons[0].n : 0);
+      render(); toast('已选到第 ' + pu + ' 单元');
+    } else if (t.id === 'progress-lesson') {
+      await St.setProgress(S().progress.unit, Number(t.value));
+      render();
     } else if (t.id === 'dig-unit') {
       var du = Number(t.value);
       var duObj = window.YW_UNITS.filter(function (x) { return x.id === du; })[0] || window.YW_UNITS[0];
