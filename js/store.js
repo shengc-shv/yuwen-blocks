@@ -354,6 +354,17 @@
       daily: S.daily || {},
       today: S.daily[d] || { attempts: 0, correct: 0, careless: 0, blocks: 0 },
       mastery: allMastery(),
+      // 掌握度的原始作答序列（每位一个 0/1 字符，最多 12 位，与 kpHistory 上限一致）。
+      // 只存 0/1，不存题干也不存答案；体积约 150 字节，换设备后掌握度能逐位复原，
+      // 连加权窗口都与原机一致。旧存档没有这个字段时走原来的近似恢复。
+      kpH: (function () {
+        var o = {};
+        Object.keys(S.kpHistory).forEach(function (k) {
+          var h = S.kpHistory[k];
+          if (h && h.length) o[k] = h.slice(-12).map(function (x) { return x ? '1' : '0'; }).join('');
+        });
+        return o;
+      })(),
       wrong: Object.keys(S.wrong).filter(function (id) { return !S.wrong[id].graduated; })
         .map(function (id) { return { q: id, t: S.wrong[id].type, s: S.wrong[id].stage, due: S.wrong[id].due }; }),
       attempts: S.attempts.filter(function (a) { return a.d === d; })
@@ -398,20 +409,49 @@
     if (p.wrong) {
       p.wrong.forEach(function (w) {
         if (!window.YW_Q_BY_ID[w.q]) return;
-        S.wrong[w.q] = { qid: w.q, type: w.t, stage: w.s || 0, due: w.due, okCount: 0, count: 1, graduated: false };
+        // okCount 与 stage 同步：stage 就是「已经复习对过几次」，丢掉它会让换设备后的
+        // 错题永远停在「还差一次才毕业」，复习了两遍也不出池。
+        S.wrong[w.q] = { qid: w.q, type: w.t, stage: w.s || 0, due: w.due,
+                         okCount: Math.min(w.s || 0, 2), count: 1, graduated: false };
       });
     }
+
+    // 掌握度：优先用快照里的原始 0/1 序列精确复原（新存档都带 kpH）。
+    // 本机已经有同一知识点的历史时保留本机的，避免同一天两台设备互相覆盖出重复条目。
+    var kpRestored = false;
+    if (p.kpH) {
+      Object.keys(p.kpH).forEach(function (k) {
+        var str = String(p.kpH[k] || '');
+        if (!str) return;
+        if (S.kpHistory[k] && S.kpHistory[k].length) return;
+        S.kpHistory[k] = str.split('').map(function (c) { return c === '1'; });
+        kpRestored = true;
+      });
+    }
+
     if (p.attempts && p.date) {
-      var qBy = window.YW_Q_BY_ID, seenToday = {};
+      var qBy = window.YW_Q_BY_ID, seenToday = {}, okToday = {};
       p.attempts.forEach(function (a) {
         var q = qBy[a.q]; if (!q) return;
-        // 恢复云端快照时同一道题只取当天第一次，避免旧存档里的重复作答把掌握度再刷高
+        if (a.ok) okToday[a.q] = 1;
         if (seenToday[a.q]) return;
         seenToday[a.q] = 1;
-        (S.kpHistory[q.kp] = S.kpHistory[q.kp] || []).push(!!a.ok);
+        // 老存档没有 kpH，只能按「当天每题第一次」近似补；新存档已精确复原，不再重复追加
+        if (!kpRestored) (S.kpHistory[q.kp] = S.kpHistory[q.kp] || []).push(!!a.ok);
       });
       Object.keys(S.kpHistory).forEach(function (k) {
         S.kpHistory[k] = S.kpHistory[k].slice(-12);
+      });
+      // 当天已计分的题也要跟着回来：否则换设备后把上午做过的题再做一遍，
+      // 「当天每题最多一块砖」会被绕过，白送砖。
+      Object.keys(seenToday).forEach(function (qid) {
+        var cur = S.qstat[qid];
+        if (cur && cur.d === p.date) {
+          cur.seen = true;
+          if (okToday[qid]) cur.scored = true;   // 只升不降，不会把本机已发的砖又退回去
+        } else {
+          S.qstat[qid] = { d: p.date, seen: true, scored: !!okToday[qid] };
+        }
       });
       S.attempts = S.attempts.concat(p.attempts.map(function (a) {
         return { q: a.q, d: p.date, ok: !!a.ok, t: a.t || '', s: -1 };
