@@ -493,13 +493,14 @@
         '<label class="field" style="margin-top:10px"><span>单元</span><select id="dig-unit">', unitSel, '</select></label>',
         '<label class="field"><span>具体第几课</span><select id="dig-lesson">', lessonSel, '</select></label>',
         '<div class="stat-row">',
-          '<div class="stat-box"><b>', today.attempts, '</b><span>今日作答</span></div>',
-          '<div class="stat-box"><b>', today.correct, '</b><span>答对</span></div>',
+          '<div class="stat-box"><b>', today.attempts, '</b><span>今日题数</span></div>',
+          '<div class="stat-box"><b>', today.correct, '</b><span>一次就对</span></div>',
           '<div class="stat-box"><b>', today.careless, '</b><span>看错了</span></div>',
         '</div>',
         '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 题）</button>',
         '<p class="tiny" style="margin-top:8px">没有倒计时；答错才会用巡查镜复盘。',
           St.isGuest() ? '游客模式：这一趟不存进度。' : '做到一半会自动存成待办。', '</p>',
+        '<p class="tiny">同一道题今天只算一块砖，做新题才有新伙伴；「一次就对」只算第一次就答对的。</p>',
       '</div>',
       St.isGuest() ? guestCard() : towerCard(),
       St.isGuest() ? '<p class="tiny" style="text-align:center">想要错题本和回忆录，就取个昵称。</p>'
@@ -621,6 +622,7 @@
     var type = correct ? '' : St.classify(q, sel);
     var lvBefore = S().level;
     var payload = St.recordAnswer(q, sel, correct, it.isReview);
+    var gained = St.lastGaveBlock();
     var leveled = S().level > lvBefore;
     var last = { qid: q.id, correct: correct, type: type, selected: sel };
     round.results.push(last);
@@ -631,17 +633,22 @@
     if (!correct) openMirror(last, q);
     else if (St.isGuest()) toast('答对了');
     else if (leveled) toast('第 ' + (S().level - 1) + ' 座塔住满了！升到 Lv.' + S().level + '，新塔开工');
-    else toast('答对了，来了一位新伙伴');
+    else if (gained) toast('答对了，来了一位新伙伴');
+    else toast('答对了，这道题今天已经算过砖了');
     syncDate(payload);
   }
 
   function advance() {
     if (round.idx + 1 >= round.items.length) {
-      // 结算完不留「完成页」：把结果记一条，直接回首页重新选
-      St.setLastRun({
-        label: round.label, mode: round.mode, spec: round.spec || {}, note: round.note || '',
-        results: round.results.slice(), at: St.todayKey(),
-      });
+      // 订正完回错题集，且不覆盖当天真实成绩的那条结果
+      if (round.isRedo) tab = 'wrong';
+      else {
+        // 结算完不留「完成页」：把结果记一条，直接回首页重新选
+        St.setLastRun({
+          label: round.label, mode: round.mode, spec: round.spec || {}, note: round.note || '',
+          results: round.results.slice(), at: St.todayKey(),
+        });
+      }
       round = null;
       St.clearRound();
     } else { round.idx += 1; round.selected = null; round.phase = 'ask'; St.saveRound(round); }
@@ -937,6 +944,7 @@
           if (q) {
             round.items = [{ q: q, isReview: true }];
             round.label = '重做这道';
+            round.isRedo = true;   // 订正不是一趟练习：不写结果条、不动当天成绩、做完回错题集
             round.idx = 0; round.results = []; round.selected = null; round.phase = 'ask';
             St.saveRound(round); render();
           }

@@ -15,6 +15,7 @@
   var useLS = false;
   var root = null;   // { v, activeId, profiles: { <profileId>: 该使用者的完整状态 } }
   var S = null;      // 始终指向当前身份的状态（游客时指向内存临时态）
+  var lastGaveBlock = false;  // 上一次 recordAnswer 有没有真的发出砖，UI 用它决定提示文案
   var guest = false; // 游客：不写 root、不上云，刷新即清空
   var writeChain = Promise.resolve();
 
@@ -61,6 +62,9 @@
       blocks: 0, level: 1, streak: 0, lastActiveDate: null,
       noAnim: false,
       lastRun: null,   // 上一趟的结果，只存本机，用于回首页后展示，不进云端快照
+      // qstat[qid] = { d, seen, scored }：这道题今天是否已计入统计 / 是否已发过砖。
+      // 用于保证「同一道题当天只算一次」，防止反复订正同一题刷砖、刷正确率、刷掌握度。
+      qstat: {},
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
       saves: {}, pendingSync: [],
     };
@@ -144,6 +148,22 @@
       ? Number(lesson) : u.lessons[0].n;
   }
 
+  // 老档案没有 qstat（这个字段是 2026-11-14 修「订正刷砖」时加的）。
+  // 升级当天要把「今天已经答过的题」补记进去，否则今天再订正同一题会被当成第一次，
+  // 白送一块砖、把今日正确率也算多一次。
+  function rebuildQstat(p) {
+    if (p.qstat && Object.keys(p.qstat).length) return;
+    var t = todayKey();
+    p.qstat = {};
+    (p.attempts || []).forEach(function (a) {
+      if (!a || a.d !== t || !a.q) return;
+      var qs = p.qstat[a.q];
+      if (!qs) qs = p.qstat[a.q] = { d: t, seen: true, scored: false };
+      // 旧版只要答对就发砖，所以今天答对过的题一律视为已计分
+      if (a.ok) qs.scored = true;
+    });
+  }
+
   function normalizeProfile(p, id, name) {
     var d = profileDefaults(name);
     Object.keys(d).forEach(function (k) { if (p[k] === undefined) p[k] = d[k]; });
@@ -157,6 +177,7 @@
     if (!validUnit(p.digUnit)) p.digUnit = p.progress.unit;
     p.digLesson = normalizeLesson(p.digUnit, p.digLesson, true);
     p.progress.lesson = normalizeLesson(p.progress.unit, p.progress.lesson, false);
+    rebuildQstat(p);
     return p;
   }
 
@@ -251,16 +272,38 @@
   function recordAnswer(q, selected, correct, isReview) {
     var t = todayKey();
     var type = correct ? '' : classify(q, selected);
+    lastGaveBlock = false;
 
+    // 同一道题当天只算一次（2026-11-14 修）：原来只要答对就 +1 砖，导致反复订正同一道错题
+    // 可以无限刷砖，同时把今日正确率、知识点掌握度一起刷高。
+    // 现在的口径：
+    //   · 统计与掌握度按「当天第一次作答」——订正不重复计入，正确率是真实的首次正确率
+    //   · 砖按「当天第一次答对」发放——第一次订正对仍给 1 块，之后重复订正不再给
+    var qs = S.qstat[q.id];
+    if (!qs || qs.d !== t) { qs = S.qstat[q.id] = { d: t, seen: false, scored: false }; }
+    var firstToday = !qs.seen;
+    if (firstToday) qs.seen = true;
+
+    // 作答日志保留每一次（错题分析要取「上次错选的是哪一项」），但它不参与计分
     S.attempts.push({ q: q.id, d: t, ok: !!correct, t: type, s: selected });
     if (S.attempts.length > 200) S.attempts = S.attempts.slice(-200);
-    (S.kpHistory[q.kp] = S.kpHistory[q.kp] || []).push(!!correct);
-    if (S.kpHistory[q.kp].length > 12) S.kpHistory[q.kp] = S.kpHistory[q.kp].slice(-12);
+
+    if (firstToday) {
+      (S.kpHistory[q.kp] = S.kpHistory[q.kp] || []).push(!!correct);
+      if (S.kpHistory[q.kp].length > 12) S.kpHistory[q.kp] = S.kpHistory[q.kp].slice(-12);
+    }
 
     var day = S.daily[t] = S.daily[t] || { attempts: 0, correct: 0, careless: 0, blocks: 0 };
-    day.attempts += 1;
-    if (correct) { day.correct += 1; S.blocks += 1; day.blocks += 1; }
-    if (type === 'careless') day.careless += 1;
+    if (firstToday) day.attempts += 1;
+    if (firstToday && correct) day.correct += 1;
+    if (firstToday && type === 'careless') day.careless += 1;
+
+    if (correct && !qs.scored) {
+      qs.scored = true;
+      S.blocks += 1;
+      day.blocks += 1;
+      lastGaveBlock = true;
+    }
 
     S.level = 1 + Math.floor(S.blocks / 20);
     if (S.lastActiveDate !== t) {
@@ -359,9 +402,12 @@
       });
     }
     if (p.attempts && p.date) {
-      var qBy = window.YW_Q_BY_ID;
+      var qBy = window.YW_Q_BY_ID, seenToday = {};
       p.attempts.forEach(function (a) {
         var q = qBy[a.q]; if (!q) return;
+        // 恢复云端快照时同一道题只取当天第一次，避免旧存档里的重复作答把掌握度再刷高
+        if (seenToday[a.q]) return;
+        seenToday[a.q] = 1;
         (S.kpHistory[q.kp] = S.kpHistory[q.kp] || []).push(!!a.ok);
       });
       Object.keys(S.kpHistory).forEach(function (k) {
@@ -564,6 +610,7 @@
     S.pendingRound = {
       spec: r.spec || {},
       label: r.label, note: r.note || '', mode: r.mode,
+      isRedo: !!r.isRedo,
       items: r.items.map(function (it) { return { q: it.q.id, isReview: !!it.isReview }; }),
       idx: r.idx || 0,
       results: r.results || [],
@@ -583,6 +630,7 @@
     return {
       spec: p.spec || {}, label: p.label || '练习', note: p.note || '',
       mode: p.mode || 'daily', items: items,
+      isRedo: !!p.isRedo,
       idx: Math.min(p.idx || 0, items.length - 1),
       results: (p.results || []).slice(0, items.length),
       selected: p.selected,
@@ -642,6 +690,7 @@
     dateKey: dateKey, todayKey: todayKey, addDays: addDays,
     masteryOf: masteryOf, allMastery: allMastery, unitMastery: unitMastery,
     classify: classify, dueWrong: dueWrong, recordAnswer: recordAnswer,
+    lastGaveBlock: function () { return lastGaveBlock; },
     buildDaySnapshot: buildDaySnapshot, finalizeDay: finalizeDay, markSynced: markSynced,
     applySnapshot: applySnapshot, pickRound: pickRound, buildRound: buildRound,
     saveRound: saveRound, loadRound: loadRound, clearRound: clearRound, setDigScope: setDigScope,
