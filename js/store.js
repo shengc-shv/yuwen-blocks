@@ -70,6 +70,8 @@
       // n = 当天已经出过几道「打字」题（填空），全天最多两道；
       // kinds = 当天出过的输出题类型，用来轮换 spot/fill/order，避免连着几趟同一种。
       fillDay: { d: '', n: 0, kinds: [] },
+      // BOSS 战利品：奖品池由家长在本机填写，战利品只作收藏，不加砖、不进云端快照。
+      prizePool: [], loot: [], bossDone: {},
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
       saves: {}, pendingSync: [],
     };
@@ -547,7 +549,7 @@
       picked = balanced(spec.scope === 'past' ? window.YW_pastQuestions(S.grade) : window.YW_currentQuestions(S.grade), n);
       note = '按单元 / 年级均衡覆盖';
     } else if (mode === 'topic') {
-      label = '专项复习';
+      label = spec.bossKey ? 'BOSS 战 · 单元小 boss' : '专项复习';
       var tp = all.filter(function (q) {
         var okKp = spec.kp ? q.kp === spec.kp : true;
         var okDim = spec.dim ? q.dim === spec.dim : true;
@@ -561,7 +563,7 @@
            : spec.kp ? ((window.YW_KP[spec.kp] || {}).label || '所选知识点') : '所选范围';
     } else if (mode === 'exam') {
       var ex = window.YW_EXAM[spec.examKey || 'midterm'];
-      label = ex.label;
+      label = spec.bossKey ? ('BOSS 战 · ' + ex.label) : ex.label;
       var units = S.examScope[ex.key] || ex.units;
       picked = balanced(window.YW_currentQuestions(S.grade, units), spec.count || ex.count);
       note = ex.desc + ' · 当前范围：第 ' + units.join('、') + ' 单元';
@@ -729,6 +731,12 @@
       label: r.label, note: r.note || '', mode: r.mode,
       isRedo: !!r.isRedo,
       challenge: !!r.challenge,
+      battle: r.battle === 'boss' ? 'boss' : '',
+      bossKey: r.bossKey || '',
+      bossHp: Number(r.bossHp) || 0,
+      bossHpMax: Number(r.bossHpMax) || 0,
+      myHp: Number(r.myHp) || 0,
+      myHpMax: Number(r.myHpMax) || 0,
       fillMode: r.fillMode === 'choice' ? 'choice' : 'fill',
       fillInput: r.fillInput || '',
       orderPicks: (r.orderPicks || []).slice(0, 2),
@@ -756,6 +764,12 @@
       mode: p.mode || 'daily', items: items,
       isRedo: !!p.isRedo,
       challenge: !!p.challenge,
+      battle: p.battle === 'boss' ? 'boss' : '',
+      bossKey: p.bossKey || '',
+      bossHp: Number(p.bossHp) || 0,
+      bossHpMax: Number(p.bossHpMax) || 0,
+      myHp: Number(p.myHp) || 0,
+      myHpMax: Number(p.myHpMax) || 0,
       fillMode: p.fillMode === 'choice' ? 'choice' : 'fill',
       fillInput: p.fillInput || '',
       orderPicks: (p.orderPicks || []).slice(0, 2),
@@ -777,6 +791,61 @@
     return first;
   }
   function hasChallenge(date) { return !!(S.badges || {})[date || todayKey()]; }
+
+  /* ---------- BOSS 战：奖品池 / 战利品 ---------- */
+  var BOSS_KEYS = ['u1', 'u2', 'u3', 'u4', 'u5', 'u6', 'u7', 'u8', 'midterm', 'final'];
+  function addPrize(name) {
+    var n = String(name == null ? '' : name).replace(/\s+/g, ' ').trim().slice(0, 16);
+    if (!n) return false;
+    S.prizePool = S.prizePool || [];
+    if (S.prizePool.indexOf(n) >= 0) return false;  // 同名不重复
+    S.prizePool.push(n);
+    persist();
+    return true;
+  }
+  function removePrize(name) {
+    if (!S.prizePool) return;
+    var i = S.prizePool.indexOf(name);
+    if (i >= 0) { S.prizePool.splice(i, 1); persist(); }
+  }
+  // 首次击败某个 BOSS 才掉落，重复通关不再发战利品（防刷）。
+  function winBoss(key) {
+    if (BOSS_KEYS.indexOf(key) < 0) return null;
+    S.bossDone = S.bossDone || {};
+    if (S.bossDone[key]) return { repeat: true, prize: null, loot: S.loot || [] };
+    S.bossDone[key] = todayKey();
+    var pool = S.prizePool || [];
+    S.loot = S.loot || [];
+    var prize = null;
+    if (pool.length) {
+      prize = pool[Math.floor(Math.random() * pool.length)];
+      S.loot.push({ prize: prize, from: key, at: todayKey() });
+    }
+    persist();
+    return { repeat: false, prize: prize, loot: S.loot, noPrize: !pool.length };
+  }
+  function bossBeaten(key) { return !!(S.bossDone || {})[key]; }
+  function bossList() {
+    return BOSS_KEYS.map(function (k) {
+      var isExam = k === 'midterm' || k === 'final';
+      return {
+        key: k,
+        name: isExam ? (k === 'midterm' ? '墨影将' : '墨影龙')
+                     : (window.YW_UNITS.filter(function (u) { return u.id === Number(k.slice(1)); })[0] || {}).name,
+        beaten: bossBeaten(k),
+        tier: isExam ? (k === 'final' ? '大' : '中') : '小',
+      };
+    });
+  }
+  function bossSpec(key) {
+    if (key === 'midterm' || key === 'final') {
+      var ex = window.YW_EXAM[key];
+      return { mode: 'exam', examKey: key, count: ex.count, bossKey: key,
+               bossHp: key === 'final' ? 10 : 7, myHp: key === 'final' ? 5 : 4 };
+    }
+    var u = Number(String(key).slice(1));
+    return { mode: 'topic', units: [u], count: 6, bossKey: key, bossHp: 4, myHp: 3 };
+  }
 
   // 上一趟结果：结算完即回首页，结果作为一条可收起的条留在首页顶部
   function setLastRun(r) {
@@ -846,6 +915,8 @@
     setProgress: setProgress,
     setGrade: function (g, t) { S.grade = Number(g); S.term = t || S.term; return persist(); },
     setExamScope: function (key, units) { S.examScope[key] = units; return persist(); },
+    addPrize: addPrize, removePrize: removePrize, winBoss: winBoss,
+    bossBeaten: bossBeaten, bossList: bossList, bossSpec: bossSpec,
     pastCount: function () { return window.YW_pastQuestions(S.grade).length; },
     setNoAnim: function (v) { S.noAnim = !!v; document.documentElement.classList.toggle('no-anim', !!v); return persist(); },
   };

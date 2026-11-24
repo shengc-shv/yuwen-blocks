@@ -395,6 +395,11 @@
       '</div>',
       '<p class="tiny" style="margin-top:8px">本地始终先存一份；同步失败会标「待同步」，下次打开自动重试，不会静默丢数据。</p>',
 
+      '<h3 style="margin-top:16px">奖品池</h3>',
+      '<p class="tiny">打赢 boss 会掉落这里填的奖品；每人首次击败才掉一次，只存本机。</p>',
+      '<button class="btn wide" data-action="prize-pool">设置奖品池（', (s.prizePool || []).length, ' 项）· 战利品 ',
+        (s.loot || []).length, ' 件</button>',
+
       '<h3 style="margin-top:16px">设置</h3>',
       '<div class="switch-row"><span>关闭界面动效</span><button class="btn sm" data-action="toggle-anim">' + (s.noAnim ? '已关闭' : '开启中') + '</button></div>',
       '<div class="btn-row" style="margin-top:10px">',
@@ -412,6 +417,99 @@
       '</details>',
       '<button class="btn ghost wide" style="margin-top:12px" data-action="close-overlay">收起</button>',
       '<input type="file" id="import-file" accept=".json,application/json" class="hidden" />',
+    ].join(''));
+  }
+
+  /* ---------------- BOSS 战 ---------------- */
+  var BOSS_NAMES = { u1: '苔刺球', u2: '沙岩怪', u3: '影叶狐', u4: '糖霜巨', u5: '露珠怪',
+                     u6: '海岩龘', u7: '风铃兽', u8: '铁甲犀', midterm: '墨影将', final: '墨影龙' };
+  var BOSS_ART = { u1: 'moss', u2: 'stone', u3: 'peach', u4: 'peach', u5: 'moss',
+                   u6: 'stone', u7: 'moss', u8: 'stone', midterm: 'stone', final: 'peach' };
+
+  function startBoss(key) {
+    var spec = St.bossSpec(key);
+    if (St.isGuest()) { toast('取个昵称才能打 boss 和收战利品'); return; }
+    if (!spec) return;
+    // 打 boss 也走普通组卷，但题目范围固定；血条状态挂在这一趟上
+    startRound(Object.assign({}, spec, {
+      battle: 'boss', bossKey: key,
+      label: 'BOSS · ' + (BOSS_NAMES[key] || key),
+      note: '答对就攻击，答错就挨打；打赢收战利品。',
+    }));
+  }
+
+  function finishBoss(outcome) {
+    var won = outcome === 'win';
+    var key = round.bossKey;
+    var name = BOSS_NAMES[key] || key;
+    var result = won ? St.winBoss(key) : null;
+    var hits = round.results.filter(function (r) { return r.correct; }).length;
+    round = null; St.clearRound();
+    render();
+    overlay([
+      '<h2>', won ? '打赢了 ' + esc(name) + '！' : '被 ' + esc(name) + ' 打退了', '</h2>',
+      '<p class="muted">答对 ', hits, ' 次 · ', won ? 'boss 血条清空' : '这次没打过，下次再来', '</p>',
+      won && result && result.repeat
+        ? '<p class="tiny">这个 boss 已经打过啦，战利品只能领一次；再来是练手。</p>' : '',
+      won && result && result.noPrize
+        ? '<p class="tiny">还没设置奖品池，去「我的 → 奖品池」填上奖品，下次打赢就能掉落。</p>' : '',
+      won && result && result.prize
+        ? '<div class="loot-win"><span>掉落战利品</span><b>' + esc(result.prize) + '</b></div>' : '',
+      '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn primary" data-action="boss-board">回到 boss 列表</button>',
+        '<button class="btn ghost" data-action="close-overlay">先歇会儿</button>',
+      '</div>',
+    ].join(''));
+  }
+
+  function openBossBoard() {
+    if (St.isGuest()) { toast('取个昵称才能打 boss 和收战利品'); return; }
+    var list = St.bossList();
+    var cards = list.map(function (b) {
+      var art = BOSS_ART[b.key];
+      return '<button class="boss-card' + (b.beaten ? ' beaten' : '') + '" data-action="boss-fight" data-key="' + b.key + '">' +
+        '<svg class="boss-ico"><use href="#mob-' + art + '"></use></svg>' +
+        '<strong>' + esc(BOSS_NAMES[b.key] || b.name) + '</strong>' +
+        '<span class="tiny">' + b.tier + ' boss · ' + (b.beaten ? '已征服' :
+          (b.key === 'midterm' ? '第 1–4 单元' : b.key === 'final' ? '全册' :
+           '第 ' + Number(b.key.slice(1)) + ' 单元')) + '</span>' +
+        (b.beaten ? '<span class="boss-flag">✓</span>' : '') +
+      '</button>';
+    }).join('');
+    var loot = (S().loot || []).slice().reverse();
+    overlay([
+      '<h2>字块大陆 · BOSS 挑战</h2>',
+      '<p class="muted">一个单元一个小 boss，期中是中 boss，期末是大 boss。答对攻击、答错挨打，打赢收战利品。</p>',
+      '<div class="boss-grid">', cards, '</div>',
+      '<h3 style="margin-top:16px">我的战利品（', loot.length, '）</h3>',
+      loot.length
+        ? '<div class="loot-list">' + loot.map(function (x) {
+            return '<div class="loot-row"><b>' + esc(x.prize) + '</b><span class="tiny">来自 ' +
+              esc(BOSS_NAMES[x.from] || x.from) + ' · ' + esc(dLabel(x.at)) + '</span></div>';
+          }).join('') + '</div>'
+        : '<p class="tiny">还没有战利品。先在「我的 → 奖品池」填上奖品，再去打 boss。</p>',
+      '<button class="btn ghost wide" style="margin-top:12px" data-action="close-overlay">收起</button>',
+    ].join(''));
+  }
+
+  function openPrizePool() {
+    if (St.isGuest()) { toast('取个昵称才能设置奖品池'); return; }
+    var s = S();
+    var pool = s.prizePool || [];
+    overlay([
+      '<h2>奖品池</h2>',
+      '<p class="muted">填入你想作为奖励的奖品名称，打赢 boss 时会从池子里随机掉一个。只在这台设备上保存。</p>',
+      '<label class="field"><span>奖品名称（最多 16 个字）</span>' +
+        '<input id="prize-name" maxlength="16" placeholder="例如：贴纸一张" /></label>',
+      '<div class="btn-row"><button class="btn primary" data-action="prize-add">加入奖品池</button></div>',
+      '<h3 style="margin-top:14px">已设置（', pool.length, '）</h3>',
+      pool.length
+        ? '<div class="loot-list">' + pool.map(function (p) {
+            return '<div class="loot-row"><b>' + esc(p) + '</b>' +
+              '<button class="btn sm ghost" data-action="prize-remove" data-name="' + esc(p) + '">删除</button></div>';
+          }).join('') + '</div>'
+        : '<p class="tiny">奖品池还是空的。</p>',
+      '<button class="btn ghost wide" style="margin-top:12px" data-action="close-overlay">收起</button>',
     ].join(''));
   }
 
@@ -436,6 +534,12 @@
       spec: spec, label: spec.label || r.label, note: r.note, mode: r.mode, items: r.items,
       idx: 0, selected: null, phase: 'ask', results: [],
       challenge: !!spec.challenge,
+      battle: spec.battle === 'boss' ? 'boss' : '',
+      bossKey: spec.bossKey || '',
+      bossHp: Number(spec.bossHp) || 0,
+      bossHpMax: Number(spec.bossHp) || 0,
+      myHp: Number(spec.myHp) || 0,
+      myHpMax: Number(spec.myHp) || 0,
       fillMode: 'fill', fillInput: '', orderPicks: [],
     };
     tab = 'practice';
@@ -539,6 +643,9 @@
         '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 题）</button>',
         '<button class="btn wide challenge-btn" data-action="start-challenge">今日挑战 · 30 秒 5 题',
           St.hasChallenge() ? '<span class="badge-done">今天已拿到徽章</span>' : '', '</button>',
+        '<button class="btn wide boss-entry" data-action="boss-board">BOSS 挑战 · 打赢掉战利品',
+          (function () { var b = St.bossList(); var n = b.filter(function (x) { return x.beaten; }).length;
+            return '<span class="badge-done">' + n + '/' + b.length + ' 已征服</span>'; })(), '</button>',
         '<p class="tiny" style="margin-top:8px">挑战只是换个节奏，时间到也能把题做完；徽章只作纪念，不加砖。',
           St.isGuest() ? '游客模式：这一趟不存进度。' : '做到一半会自动存成待办。', '</p>',
         '<p class="tiny">同一道题今天只算一块砖，做新题才有新伙伴；「一次就对」只算第一次就答对的。</p>',
@@ -624,6 +731,19 @@
         '</div>',
       ].join('');
     }
+    var bossHtml = round.battle === 'boss' ? [
+      '<div class="boss-battle">',
+        '<div class="boss-side">',
+          '<svg class="boss-ico"><use href="#mob-', BOSS_ART[round.bossKey] || 'stone', '"></use></svg>',
+          '<div class="hp-line"><span>boss</span><div class="hp-track"><i class="hp-boss" style="width:',
+            Math.round((round.bossHp || 0) / (round.bossHpMax || 1) * 100), '%"></i></div>',
+            '<b>', round.bossHp, '/', round.bossHpMax, '</b></div>',
+          '<div class="hp-line"><span>我的</span><div class="hp-track"><i class="hp-me" style="width:',
+            Math.round((round.myHp || 0) / (round.myHpMax || 1) * 100), '%"></i></div>',
+            '<b>', round.myHp, '/', round.myHpMax, '</b></div>',
+        '</div>',
+      '</div>',
+    ].join('') : '';
     var challengeHtml = round.challenge ? [
       '<div class="challenge-bar">',
         '<span>今日挑战 · <b id="chal-time">', challengeLeft, '</b> 秒</span>',
@@ -645,6 +765,7 @@
     }
     view.innerHTML = [
       '<div class="section-title"><h2>', esc(round.label), '</h2><span class="tiny">', round.idx + 1, ' / ', round.items.length, ' 题</span></div>',
+      bossHtml,
       challengeHtml,
       '<div class="round-head"><div class="round-dots">', dots, '</div><span class="tiny">',
         round.challenge ? '挑战进行中' : '不用赶时间', '</span></div>',
@@ -730,6 +851,11 @@
     var last = { qid: q.id, correct: correct, type: type, selected: sel };
     round.results.push(last);
     round.phase = 'ask';
+    // BOSS 战：答对砍 boss 一格血，答错自己挨一下。只影响血条，不改砖数口径。
+    if (round.battle === 'boss') {
+      if (correct) round.bossHp = Math.max(0, (round.bossHp || 0) - 1);
+      else round.myHp = Math.max(0, (round.myHp || 0) - 1);
+    }
     // 连对只给反馈，不加砖、不改计分口径；每三题庆祝一次
     var chain = 0;
     for (var ci = round.results.length - 1; ci >= 0 && round.results[ci].correct; ci--) chain++;
@@ -824,6 +950,14 @@
   }
 
   function advance() {
+    // BOSS 战：血量先分胜负，题目只是攻击机会；血尽即结算，不写平常的结果条。
+    if (round.battle === 'boss') {
+      var outcome = null;
+      if (round.bossHp <= 0) outcome = 'win';
+      else if (round.myHp <= 0) outcome = 'lose';
+      else if (round.idx + 1 >= round.items.length) outcome = 'lose'; // 题用完还没打死
+      if (outcome) { finishBoss(outcome); return; }
+    }
     if (round.idx + 1 >= round.items.length) {
       // 订正完回错题集，且不覆盖当天真实成绩的那条结果
       if (round.isRedo) tab = 'wrong';
@@ -1092,6 +1226,17 @@
         startRound({ mode: 'daily', count: 5, unit: S().digUnit, lesson: S().digLesson,
                      challenge: true, label: '今日挑战' });
         break;
+      case 'boss-board': openBossBoard(); break;
+      case 'boss-fight': startBoss(d.key); break;
+      case 'prize-pool': openPrizePool(); break;
+      case 'prize-add': {
+        var inp = document.getElementById('prize-name');
+        if (inp && St.addPrize(inp.value)) { toast('已加入奖品池'); }
+        else toast('奖品名不能为空，或者已经有了');
+        openPrizePool();
+        break;
+      }
+      case 'prize-remove': St.removePrize(d.name); openPrizePool(); break;
       case 'resume-round': {
         var pr = St.loadRound();
         if (!pr) { toast('这一趟已经不在了'); render(); break; }

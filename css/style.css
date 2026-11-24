@@ -390,3 +390,31 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .combo-burst .round-head,
 .combo-burst .challenge-bar { animation: comboPop .9s ease-out; }
 @keyframes comboPop { 0% { transform: scale(1); } 35% { transform: scale(1.06); } 100% { transform: scale(1); } }
+
+/* BOSS 挑战：全部复用原创像素生物头，不引入任何第三方形象 */
+.boss-entry { background: var(--grass-l); border-color: var(--grass-dd); margin-top: 9px; }
+.boss-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; margin-top: 12px; }
+.boss-card { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px;
+  padding: 10px 8px; min-height: 104px; border: 3px solid var(--dirt-d); background: var(--card); box-shadow: var(--shadow); }
+.boss-card strong { font-size: 14px; }
+.boss-card .tiny { color: var(--ink-2); }
+.boss-card.beaten { border-color: var(--grass-dd); background: var(--grass-l); }
+.boss-flag { position: absolute; top: 4px; right: 7px; color: var(--grass-dd); font-weight: 700; }
+.boss-ico { width: 40px; height: 40px; image-rendering: pixelated; }
+.boss-battle { padding: 9px 11px; margin-bottom: 9px; background: var(--paper-2); border: 2px solid var(--dirt-d); }
+.boss-side { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.hp-line { display: flex; align-items: center; gap: 6px; flex: 1 1 180px; font-size: 12px; }
+.hp-line > span { flex: none; color: var(--ink-2); }
+.hp-line > b { flex: none; font-size: 11px; }
+.hp-track { flex: 1; min-width: 70px; height: 10px; background: var(--card); border: 1px solid var(--ink-3); }
+.hp-track i { display: block; height: 100%; transition: width .35s ease-out; }
+.hp-boss { background: var(--red); }
+.hp-me { background: var(--grass); }
+.loot-win { margin-top: 12px; padding: 14px; text-align: center; background: var(--amber); border: 3px solid var(--amber-d); }
+.loot-win span { display: block; font-size: 12px; color: var(--ink-2); }
+.loot-win b { display: block; margin-top: 4px; font-size: 21px; }
+.loot-list { max-height: 240px; overflow-y: auto; }
+.loot-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 14px; }
+.loot-row .tiny { color: var(--ink-2); }
+@media (max-width: 420px) { .boss-grid { grid-template-columns: 1fr 1fr; } }
