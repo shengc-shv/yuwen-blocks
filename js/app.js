@@ -438,8 +438,10 @@
   /* ---------------- BOSS 战 ---------------- */
   var BOSS_NAMES = { u1: '苔刺球', u2: '沙岩怪', u3: '影叶狐', u4: '糖霜巨', u5: '露珠怪',
                      u6: '海岩龘', u7: '风铃兽', u8: '铁甲犀', midterm: '墨影将', final: '墨影龙' };
-  var BOSS_ART = { u1: 'moss', u2: 'stone', u3: 'peach', u4: 'peach', u5: 'moss',
-                   u6: 'stone', u7: 'moss', u8: 'stone', midterm: 'stone', final: 'peach' };
+  // 每个 BOSS 一个独立的自绘像素形象（见 index.html 的 boss-* symbol）
+  var BOSS_ART = { u1: 'boss-u1', u2: 'boss-u2', u3: 'boss-u3', u4: 'boss-u4',
+                   u5: 'boss-u5', u6: 'boss-u6', u7: 'boss-u7', u8: 'boss-u8',
+                   midterm: 'boss-mid', final: 'boss-final' };
 
   function startBoss(key) {
     var spec = St.bossSpec(key);
@@ -483,7 +485,7 @@
     var cards = list.map(function (b) {
       var art = BOSS_ART[b.key];
       return '<button class="boss-card' + (b.beaten ? ' beaten' : '') + '" data-action="boss-fight" data-key="' + b.key + '">' +
-        '<svg class="boss-ico"><use href="#mob-' + art + '"></use></svg>' +
+        '<svg class="boss-ico"><use href="#' + art + '"></use></svg>' +
         '<strong>' + esc(BOSS_NAMES[b.key] || b.name) + '</strong>' +
         '<span class="tiny">' + b.tier + ' boss · ' + (b.beaten ? '已征服' :
           (b.key === 'midterm' ? '第 1–4 单元' : b.key === 'final' ? '全册' :
@@ -764,7 +766,7 @@
             '<div class="fighter-arm"></div>',
           '</div>',
           '<div class="fighter enemy" id="f-enemy">',
-            '<svg class="fighter-head"><use href="#mob-', BOSS_ART[round.bossKey] || 'stone', '"></use></svg>',
+            '<svg class="fighter-head"><use href="#', BOSS_ART[round.bossKey] || 'boss-u1', '"></use></svg>',
             '<div class="fighter-body enemy-body"></div>',
             '<div class="fighter-arm"></div>',
           '</div>',
