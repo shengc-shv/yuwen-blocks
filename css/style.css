@@ -400,7 +400,7 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .boss-card .tiny { color: var(--ink-2); }
 .boss-card.beaten { border-color: var(--grass-dd); background: var(--grass-l); }
 .boss-flag { position: absolute; top: 4px; right: 7px; color: var(--grass-dd); font-weight: 700; }
-.boss-ico { width: 40px; height: 40px; image-rendering: pixelated; }
+.boss-ico { width: 48px; height: 48px; image-rendering: pixelated; }
 .boss-battle { padding: 9px 11px; margin-bottom: 9px; background: var(--paper-2); border: 2px solid var(--dirt-d); }
 .boss-side { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .hp-line { display: flex; align-items: center; gap: 6px; flex: 1 1 180px; font-size: 12px; }
@@ -425,6 +425,7 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .hp-side { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; font-size: 12px; }
 .hp-side.boss-side { justify-content: flex-end; }
 .hp-side > span { flex: none; font-weight: 500; }
+.boss-tag { white-space: nowrap; font-weight: 700; }
 .hp-side > b { flex: none; font-size: 11px; }
 .hp-track { flex: 1; min-width: 48px; height: 11px; background: var(--card); border: 2px solid var(--ink); }
 .hp-track i { display: block; height: 100%; transition: width .35s ease-out; }
@@ -438,17 +439,24 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .fighter { position: absolute; bottom: 8px; width: 62px; height: 62px; z-index: 2; }
 .fighter.hero { left: 14px; }
 .fighter.enemy { right: 14px; transform: scaleX(-1); }
-.fighter-head { position: absolute; left: 15px; top: 0; width: 34px; height: 34px;
+.fighter-head { position: absolute; left: 12px; top: 0; width: 38px; height: 38px;
   image-rendering: pixelated; filter: drop-shadow(2px 2px 0 rgba(0,0,0,.2)); }
-.fighter-body { position: absolute; left: 17px; top: 30px; width: 30px; height: 24px; border: 3px solid var(--ink); }
+.fighter-body { position: absolute; left: 17px; top: 34px; width: 30px; height: 22px; border: 3px solid var(--ink); }
 .hero-body { background: var(--grass); }
 .enemy-body { background: #b585b5; }
 .fighter-body:after { content: ''; position: absolute; left: 7px; bottom: -14px; width: 7px; height: 14px;
   background: var(--ink); box-shadow: 13px 0 0 var(--ink); }
 .fighter-arm { position: absolute; right: 0; top: 36px; width: 15px; height: 6px; background: var(--ink);
   transform-origin: right center; }
-.arena-tip { padding: 5px 9px; background: var(--paper-2); border-top: 2px solid var(--dirt-d);
+.arena-tip { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 4px 9px; background: var(--paper-2); border-top: 2px solid var(--dirt-d);
   font-size: 11px; color: var(--ink-2); text-align: center; }
+.arena-tip > span { flex: 1; min-width: 0; }
+/* 战斗中随时可以撤：做成两侧描边的实体按钮，保证手机上够好点（≥32px 高） */
+.arena-quit { flex: none; min-height: 32px; padding: 0 12px; font: inherit; font-size: 12px;
+  font-weight: 700; color: var(--ink); background: var(--card);
+  border: 2px solid var(--ink); box-shadow: 0 2px 0 var(--ink); cursor: pointer; }
+.arena-quit:active { transform: translateY(2px); box-shadow: none; }
 .slash { position: absolute; z-index: 4; top: 34px; left: 50%; width: 34px; height: 6px;
   background: #fff; box-shadow: 0 -7px 0 #fff, 0 7px 0 #fff; opacity: 0; }
 .dmg { position: absolute; z-index: 5; top: 16px; left: 50%; font-weight: 700; font-size: 20px;

@@ -442,6 +442,10 @@
   var BOSS_ART = { u1: 'boss-u1', u2: 'boss-u2', u3: 'boss-u3', u4: 'boss-u4',
                    u5: 'boss-u5', u6: 'boss-u6', u7: 'boss-u7', u8: 'boss-u8',
                    midterm: 'boss-mid', final: 'boss-final' };
+  // 身体配色跟形象同一个色系，避免十个 boss 打起来都是同一个紫色方块身体
+  var BOSS_TINT = { u1: '#6abe30', u2: '#c2a878', u3: '#534ab7', u4: '#f4c0d1',
+                    u5: '#378add', u6: '#185fa5', u7: '#9fe1cb', u8: '#888780',
+                    midterm: '#633806', final: '#3c3489' };
 
   function startBoss(key) {
     var spec = St.bossSpec(key);
@@ -453,6 +457,18 @@
       label: 'BOSS · ' + (BOSS_NAMES[key] || key),
       note: '答对就攻击，答错就挨打；打赢收战利品。',
     }));
+  }
+
+  // 打到一半想撤：不判胜负、不发奖、不记错题，清掉这一趟回 boss 列表
+  function quitBoss() {
+    if (!round || round.battle !== 'boss') { render(); return; }
+    confirmSheet('退出这场战斗？', '这一趟的进度不保留，boss 会回到满血，下次重新开打。',
+      '退出战斗', function () {
+        round = null;
+        St.clearRound();
+        render();
+        openBossBoard();
+      });
   }
 
   function finishBoss(outcome) {
@@ -757,7 +773,7 @@
           '<div class="hp-side boss-side"><b>', round.bossHp, '/', round.bossHpMax, '</b>',
             '<div class="hp-track"><i class="hp-boss" style="width:',
             Math.round((round.bossHp || 0) / (round.bossHpMax || 1) * 100), '%"></i></div>',
-            '<span>BOSS</span></div>',
+            '<span class="boss-tag">', esc(BOSS_NAMES[round.bossKey] || 'BOSS'), '</span></div>',
         '</div>',
         '<div class="arena-floor">',
           '<div class="fighter hero" id="f-hero">',
@@ -767,13 +783,16 @@
           '</div>',
           '<div class="fighter enemy" id="f-enemy">',
             '<svg class="fighter-head"><use href="#', BOSS_ART[round.bossKey] || 'boss-u1', '"></use></svg>',
-            '<div class="fighter-body enemy-body"></div>',
+            '<div class="fighter-body enemy-body" style="background:', BOSS_TINT[round.bossKey] || '#b585b5', '"></div>',
             '<div class="fighter-arm"></div>',
           '</div>',
           '<div class="slash" id="slash"></div>',
           '<div class="dmg" id="dmg"></div>',
         '</div>',
-        '<div class="arena-tip">答对就冲上去打，答错就要挨一下</div>',
+        '<div class="arena-tip">',
+          '<span>答对就冲上去打，答错就要挨一下</span>',
+          '<button type="button" class="arena-quit" data-action="boss-quit">退出战斗</button>',
+        '</div>',
       '</div>',
     ].join('') : '';
     var challengeHtml = round.challenge ? [
@@ -1274,6 +1293,7 @@
         break;
       case 'boss-board': openBossBoard(); break;
       case 'boss-fight': startBoss(d.key); break;
+      case 'boss-quit': quitBoss(); break;
       case 'prize-pool': openPrizePool(); break;
       case 'prize-add': {
         var inp = document.getElementById('prize-name');
