@@ -436,7 +436,7 @@
       spec: spec, label: spec.label || r.label, note: r.note, mode: r.mode, items: r.items,
       idx: 0, selected: null, phase: 'ask', results: [],
       challenge: !!spec.challenge,
-      fillMode: 'fill', fillInput: '',
+      fillMode: 'fill', fillInput: '', orderPicks: [],
     };
     tab = 'practice';
     St.saveRound(round);
@@ -571,8 +571,11 @@
       return '<button type="button" class="' + cls + '" data-action="opt" data-idx="' + i + '"' + (fb ? ' disabled' : '') + '>' +
              '<span class="key">' + 'ABCD'[i] + '</span><span>' + esc(o) + '</span></button>';
     }).join('');
-    // 「补一个字」：只在出题时标记的题上出现，打不出来可以随时切回选项。
-    var useFill = !!(it.asFill && q.fill && round.fillMode !== 'choice' && !fb);
+    // 三种输出题都只是换呈现，答案仍映射回原来的选项索引。
+    var kind = it.outKind || (it.asFill ? 'fill' : '');
+    var useFill = !!(kind === 'fill' && q.fill && round.fillMode !== 'choice' && !fb);
+    var useSpot = !!(kind === 'spot' && q.spot && !fb);
+    var useOrder = !!(kind === 'order' && q.order && !fb);
     var answerHtml = opts;
     if (useFill) {
       answerHtml = [
@@ -583,6 +586,40 @@
           '<div class="btn-row" style="margin-top:10px">',
             '<button type="button" class="btn primary" data-action="fill-submit">写好啦，提交</button>',
             '<button type="button" class="btn ghost" data-action="fill-choice">打不出来，看选项</button>',
+          '</div>',
+        '</div>',
+      ].join('');
+    } else if (useSpot) {
+      var spotOpts = q.options.map(function (o, i) {
+        return '<button type="button" class="spot-char' + (round.selected === i ? ' on' : '') +
+               '" data-action="spot" data-idx="' + i + '">' + esc(o) + '</button>';
+      }).join('');
+      answerHtml = [
+        '<div class="spot-box">',
+          '<p class="tiny">这句话里有一个字写错了，点出来</p>',
+          '<div class="spot-sentence">', esc(q.spot.text), '</div>',
+          '<div class="spot-chars">', spotOpts, '</div>',
+          '<p class="tiny">不用打字，点一下那个写错的字。</p>',
+        '</div>',
+      ].join('');
+    } else if (useOrder) {
+      var lines = q.order.lines.slice();
+      var orderOpts = lines.map(function (line, i) {
+        var pickedIdx = (round.orderPicks || []).indexOf(i);
+        return '<button type="button" class="opt order-line' + (pickedIdx >= 0 ? ' picked' : '') +
+               '" data-action="order-pick" data-idx="' + i + '">' +
+               '<span class="key">' + (pickedIdx >= 0 ? pickedIdx + 1 : '·') + '</span>' +
+               '<span>' + esc(line) + '</span></button>';
+      }).join('');
+      answerHtml = [
+        '<div class="order-box">',
+          '<p class="tiny">给诗句排顺序：先点上一句，再点它的下一句</p>',
+          '<div class="order-first">', esc(q.order.first), '</div>',
+          '<div class="options">', orderOpts, '</div>',
+          '<div class="btn-row" style="margin-top:10px">',
+            '<button type="button" class="btn primary" data-action="order-submit"' +
+              ((round.orderPicks || []).length === 2 ? '' : ' disabled') + '>就这个顺序</button>',
+            '<button type="button" class="btn ghost" data-action="order-reset">重新排</button>',
           '</div>',
         '</div>',
       ].join('');
@@ -719,7 +756,7 @@
   // 「补一个字」的输入判定：把输入的字映射回原来的选项索引，
   // 这样计分、错因归类、错题集、掌握度全部沿用原逻辑，不另起一套。
   function submitFill() {
-    if (!round || !round.items[round.idx].asFill) return;
+    if (!round || (round.items[round.idx].outKind || (round.items[round.idx].asFill ? 'fill' : '')) !== 'fill') return;
     var q = round.items[round.idx].q;
     var el = document.getElementById('fill-input');
     var raw = el ? el.value.trim() : '';
@@ -743,6 +780,49 @@
     render();
   }
 
+  // 挑错字：点中句子里写错的那个字 = 认出了正确写法，映射回原题的正确项。
+  // 点中别的字则映射到一个干扰项，错因归类照旧。
+  function submitSpot(idx) {
+    if (!round || round.phase !== 'ask') return;
+    var it = round.items[round.idx], q = it.q;
+    if (!q.spot) return;
+    idx = Number(idx);
+    round.selected = (idx === q.spot.wrongIndex) ? q.answer
+      : (q.trap && q.trap.length ? q.trap[0] : (q.answer + 1) % q.options.length);
+    St.saveRound(round);
+    submitAnswer();
+  }
+
+  // 排顺序：正确顺序是「上一句 → 下一句」，孩子只要点中那句下一句即可。
+  // 映射回原题的正确选项索引，计分/错题/掌握度都不变。
+  function orderPicked(idx) {
+    if (!round || round.phase !== 'ask') return;
+    idx = Number(idx);
+    round.orderPicks = round.orderPicks || [];
+    var at = round.orderPicks.indexOf(idx);
+    if (at >= 0) round.orderPicks.splice(at, 1);
+    else if (round.orderPicks.length < 2) round.orderPicks.push(idx);
+    else round.orderPicks = [idx];
+    St.saveRound(round);
+    render();
+  }
+  function orderReset() {
+    if (!round) return;
+    round.orderPicks = []; round.selected = null;
+    St.saveRound(round); render();
+  }
+  function submitOrder() {
+    if (!round || round.phase !== 'ask') return;
+    var it = round.items[round.idx], q = it.q;
+    if (!q.order || (round.orderPicks || []).length !== 2) return;
+    // 第二句点中正确下一句即算对；错则映射到某个干扰项，保留错因归类
+    var second = round.orderPicks[1];
+    round.selected = (second === q.answer) ? q.answer
+      : (q.trap && q.trap.length ? q.trap[0] : (q.answer + 1) % q.options.length);
+    St.saveRound(round);
+    submitAnswer();
+  }
+
   function advance() {
     if (round.idx + 1 >= round.items.length) {
       // 订正完回错题集，且不覆盖当天真实成绩的那条结果
@@ -763,7 +843,7 @@
       St.clearRound();
     } else {
       round.idx += 1; round.selected = null; round.phase = 'ask';
-      round.fillInput = '';
+      round.fillInput = ''; round.orderPicks = [];
       St.saveRound(round);
     }
     render();
@@ -1049,6 +1129,10 @@
       case 'submit': submitAnswer(); break;
       case 'fill-submit': submitFill(); break;
       case 'fill-choice': fillToChoice(); break;
+      case 'spot': submitSpot(d.idx); break;
+      case 'order-pick': orderPicked(d.idx); break;
+      case 'order-reset': orderReset(); break;
+      case 'order-submit': submitOrder(); break;
       case 'next': advance(); if (endToast) { toast(endToast); endToast = null; } break;
       case 'again': {
         var lr = S().lastRun;

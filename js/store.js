@@ -67,8 +67,9 @@
       qstat: {},
       // 每日挑战的徽章只做纪念：不加砖、不计入掌握度，也不进云端快照。
       badges: {},
-      // 当天已经出过几道「补一个字」，一天最多两道，不被多趟练习叠加。
-      fillDay: { d: '', n: 0 },
+      // n = 当天已经出过几道「打字」题（填空），全天最多两道；
+      // kinds = 当天出过的输出题类型，用来轮换 spot/fill/order，避免连着几趟同一种。
+      fillDay: { d: '', n: 0, kinds: [] },
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
       saves: {}, pendingSync: [],
     };
@@ -567,20 +568,83 @@
     }
 
     var t = todayKey();
-    if (!S.fillDay || S.fillDay.d !== t) S.fillDay = { d: t, n: 0 };
-    var fillLeft = Math.max(0, 2 - (S.fillDay.n || 0));
-    var uniq = {}, items = [], fillUsed = 0;
+    if (!S.fillDay || S.fillDay.d !== t) S.fillDay = { d: t, n: 0, kinds: [] };
+    if (!S.fillDay.kinds) S.fillDay.kinds = [];
+    var typeLeft = Math.max(0, 2 - (S.fillDay.n || 0)); // 只约束打字题
+
+    // 输出题呈现：spot 挑错字（点一下）/ fill 补一个字（打字）/ order 排顺序（点选）。
+    // 按「今天还没出过的优先」轮换，避免连着几趟都是同一种。
+    function tryKind(q, k) {
+      if (k === 'spot') return !!(q && q.spot);
+      if (k === 'fill') return !!(q && q.fill && typeLeft > 0);
+      if (k === 'order') return !!(q && q.order);
+      return false;
+    }
+    function outKind(q) {
+      if (!q) return null;
+      var fresh = ['spot', 'fill', 'order'].filter(function (k) { return S.fillDay.kinds.indexOf(k) < 0; });
+      var seen = ['spot', 'fill', 'order'].filter(function (k) { return S.fillDay.kinds.indexOf(k) >= 0; });
+      var order = fresh.concat(seen);
+      for (var i = 0; i < order.length; i++) if (tryKind(q, order[i])) return order[i];
+      return null;
+    }
+
+    // 主动补足：以前只靠随机命中，实测每趟平均只有 1.08 道、21% 的趟一道不出。
+    // 现在每组都从「本课 → 本单元 → 已学」里找带输出标记的题，替换末尾的普通新题，
+    // 补足到两道；到期错题和已做过的题不参与替换。打字题全天仍最多两道。
+    if (mode === 'daily') {
+      var pool = [];
+      var seenPool = {};
+      [].concat(typeof inLesson !== 'undefined' ? inLesson : [],
+                typeof inUnit !== 'undefined' ? inUnit : [],
+                typeof learned !== 'undefined' ? learned : [],
+                window.YW_currentQuestions(S.grade)).forEach(function (q) {
+        if (q && !seenPool[q.id]) { seenPool[q.id] = 1; pool.push(q); }
+      });
+      var pickedIds = {};
+      picked.forEach(function (q) { if (q) pickedIds[q.id] = 1; });
+      var usedKinds = {};
+      picked.forEach(function (q) {
+        var k = q && !isWrong(q.id) ? outKind(q) : null;
+        if (k) usedKinds[k] = 1;
+      });
+      var needOut = Math.max(0, 2 - Object.keys(usedKinds).length);
+      var candidates = rank(pool.filter(function (q) {
+        return q && !pickedIds[q.id] && !isWrong(q.id) && outKind(q);
+      }));
+      // 同一趟里两道输出题尽量不同类型：先选本趟还没用过的类型
+      candidates.sort(function (a, b) {
+        return (usedKinds[outKind(a)] ? 1 : 0) - (usedKinds[outKind(b)] ? 1 : 0);
+      });
+      for (var ci = 0; ci < candidates.length && needOut > 0; ci++) {
+        var cand = candidates[ci];
+        var candKind = outKind(cand);
+        if (usedKinds[candKind]) continue;   // 本趟已有同类型，跳过换下一道
+        for (var pi = picked.length - 1; pi >= 0; pi--) {
+          var old = picked[pi];
+          if (!old || isWrong(old.id) || outKind(old)) continue;
+          picked[pi] = cand; usedKinds[candKind] = 1; needOut--; break;
+        }
+      }
+    }
+
+    var uniq = {}, items = [], outUsed = 0, typedUsed = 0, kindSeen = {};
     picked.forEach(function (q) {
       if (!q || uniq[q.id]) return;
       uniq[q.id] = 1;
       var review = isWrong(q.id);
-      // 全天最多两道「补一个字」：只在今日挖掘里穿插，到期错题仍按选择题复习，
-      // 免得孩子一进来就又是回忆又是打字。呈现方式随这一趟一起存，刷新不丢。
-      var asFill = !!(mode === 'daily' && !review && q.fill && fillUsed < fillLeft);
-      if (asFill) { fillUsed++; S.fillDay.n++; }
-      items.push({ q: q, isReview: review, asFill: asFill });
+      var want = (mode === 'daily' && !review && outUsed < 2) ? outKind(q) : null;
+      // 同一趟里同一种输出题只保留一道：随机撞型的第二道降级为普通选择题，
+      // 免得孩子连着做两道「挑错字」以为是卡住了。
+      var kind = (want && !kindSeen[want]) ? want : null;
+      if (kind) {
+        outUsed++; kindSeen[kind] = 1;
+        if (kind === 'fill') { typedUsed++; S.fillDay.n++; }
+        if (S.fillDay.kinds.indexOf(kind) < 0) S.fillDay.kinds.push(kind);
+      }
+      items.push({ q: q, isReview: review, outKind: kind || '' });
     });
-    if (fillUsed) persist();
+    if (outUsed) persist();
     return { mode: mode, label: label, note: note, items: items, count: items.length };
   }
 
@@ -667,8 +731,9 @@
       challenge: !!r.challenge,
       fillMode: r.fillMode === 'choice' ? 'choice' : 'fill',
       fillInput: r.fillInput || '',
+      orderPicks: (r.orderPicks || []).slice(0, 2),
       items: r.items.map(function (it) {
-        return { q: it.q.id, isReview: !!it.isReview, asFill: !!it.asFill };
+        return { q: it.q.id, isReview: !!it.isReview, outKind: it.outKind || (it.asFill ? 'fill' : '') };
       }),
       idx: r.idx || 0,
       results: r.results || [],
@@ -682,7 +747,8 @@
     if (!p || !p.items || !p.items.length || p.phase === 'done') return null;
     var items = p.items.map(function (x) {
       var q = window.YW_Q_BY_ID[x.q];
-      return q ? { q: q, isReview: !!x.isReview, asFill: !!x.asFill } : null;
+      return q ? { q: q, isReview: !!x.isReview,
+                   outKind: x.outKind || (x.asFill ? 'fill' : '') } : null;
     }).filter(Boolean);
     if (!items.length) return null;
     return {
@@ -692,6 +758,7 @@
       challenge: !!p.challenge,
       fillMode: p.fillMode === 'choice' ? 'choice' : 'fill',
       fillInput: p.fillInput || '',
+      orderPicks: (p.orderPicks || []).slice(0, 2),
       idx: Math.min(p.idx || 0, items.length - 1),
       results: (p.results || []).slice(0, items.length),
       selected: p.selected,

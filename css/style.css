@@ -373,6 +373,18 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .fill-box { padding: 10px; background: var(--paper); border: 2px dashed var(--dirt); }
 .fill-input { width: 100%; min-height: 52px; padding: 8px 11px; margin-top: 7px; border: 2px solid var(--dirt-d); background: var(--card); font-size: 19px; letter-spacing: 2px; }
 .fill-input:focus { outline: 2px solid var(--grass); outline-offset: 1px; }
+/* 挑错字：在句子里找出写错的那个字，点一下即可 */
+.spot-box { padding: 10px; background: var(--paper); border: 2px dashed var(--dirt-d); }
+.spot-sentence { padding: 12px 10px; margin: 8px 0; background: var(--card); border: 2px solid var(--line); font-size: 17px; line-height: 1.8; }
+.spot-chars { display: flex; gap: 8px; flex-wrap: wrap; }
+.spot-char { min-width: 52px; min-height: 48px; padding: 6px 10px; border: 2px solid var(--line); background: var(--card); font-size: 20px; }
+.spot-char.on { border-color: var(--grass-dd); background: var(--grass-l); }
+
+/* 排顺序：先点上一句，再点下一句 */
+.order-box { padding: 10px; background: var(--paper); border: 2px dashed var(--amber-d); }
+.order-first { padding: 10px; margin: 8px 0; background: var(--amber); border: 2px solid var(--amber-d); font-size: 16px; }
+.order-line.picked { border-color: var(--grass-dd); background: var(--grass-l); }
+
 .no-anim .combo-burst, .no-anim .combo-burst * { animation: none !important; }
 .combo-burst .tower-grid,
 .combo-burst .round-head,
