@@ -162,4 +162,15 @@
 
   window.YW_BANK_QUESTIONS = out;
   window.YW_QUESTIONS = window.YW_QUESTIONS.concat(out);
+
+  // 轻量输出题「补一个字」：只挑题干自带括号、且正确答案正好是 1–3 个汉字的题。
+  // 不新增题目、不改题干和选项；判卷时把输入的字映射回原来的选项索引，
+  // 所以计分、错题集、掌握度、错因归类全部沿用原口径，不另起一套规则。
+  window.YW_QUESTIONS.forEach(function (q) {
+    if (q.fill) return;
+    var a = String(q.options && q.options[q.answer] != null ? q.options[q.answer] : '');
+    if (!/^[\u4e00-\u9fa5]{1,3}$/.test(a)) return;   // 排除带省略号、标点或过长的答案
+    if (!/（\s*）|\(\s*_+\s*\)/.test(q.stem)) return; // 题干必须本来就有空位
+    q.fill = { accepts: [a] };
+  });
 })();

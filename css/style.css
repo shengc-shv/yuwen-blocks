@@ -360,3 +360,21 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .past-list { max-height: 260px; overflow-y: auto; }
 .past-row { display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; border-bottom: 1px dashed var(--line); font-size: 13px; }
 @media (max-width: 420px) { .mode-grid, .exam-grid { grid-template-columns: 1fr; } }
+
+/* 今日挑战：和普通练习区分开，但不用红色制造焦虑 */
+.challenge-btn { background: var(--amber); border-color: var(--amber-d); color: var(--ink); margin-top: 9px; }
+.badge-done { display: inline-block; margin-left: 6px; padding: 1px 6px; border: 1px solid var(--amber-d); border-radius: 9px; font-size: 11px; background: var(--card); }
+.challenge-bar { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding: 8px 11px; margin-bottom: 9px; background: var(--amber); border: 2px solid var(--amber-d); font-size: 13px; }
+.challenge-bar .tiny { margin-left: auto; }
+.challenge-track { flex: 1 1 90px; height: 7px; background: var(--paper-2); border: 1px solid var(--amber-d); }
+.challenge-track i { display: block; height: 100%; background: var(--amber-d); transition: width .9s linear; }
+
+/* 补一个字：输入量控制在 1–3 字，打不出来一键切回选项 */
+.fill-box { padding: 10px; background: var(--paper); border: 2px dashed var(--dirt); }
+.fill-input { width: 100%; min-height: 52px; padding: 8px 11px; margin-top: 7px; border: 2px solid var(--dirt-d); background: var(--card); font-size: 19px; letter-spacing: 2px; }
+.fill-input:focus { outline: 2px solid var(--grass); outline-offset: 1px; }
+.no-anim .combo-burst, .no-anim .combo-burst * { animation: none !important; }
+.combo-burst .tower-grid,
+.combo-burst .round-head,
+.combo-burst .challenge-bar { animation: comboPop .9s ease-out; }
+@keyframes comboPop { 0% { transform: scale(1); } 35% { transform: scale(1.06); } 100% { transform: scale(1); } }

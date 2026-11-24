@@ -65,6 +65,10 @@
       // qstat[qid] = { d, seen, scored }：这道题今天是否已计入统计 / 是否已发过砖。
       // 用于保证「同一道题当天只算一次」，防止反复订正同一题刷砖、刷正确率、刷掌握度。
       qstat: {},
+      // 每日挑战的徽章只做纪念：不加砖、不计入掌握度，也不进云端快照。
+      badges: {},
+      // 当天已经出过几道「补一个字」，一天最多两道，不被多趟练习叠加。
+      fillDay: { d: '', n: 0 },
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
       saves: {}, pendingSync: [],
     };
@@ -562,12 +566,21 @@
       note = ex.desc + ' · 当前范围：第 ' + units.join('、') + ' 单元';
     }
 
-    var uniq = {}, items = [];
+    var t = todayKey();
+    if (!S.fillDay || S.fillDay.d !== t) S.fillDay = { d: t, n: 0 };
+    var fillLeft = Math.max(0, 2 - (S.fillDay.n || 0));
+    var uniq = {}, items = [], fillUsed = 0;
     picked.forEach(function (q) {
       if (!q || uniq[q.id]) return;
       uniq[q.id] = 1;
-      items.push({ q: q, isReview: isWrong(q.id) });
+      var review = isWrong(q.id);
+      // 全天最多两道「补一个字」：只在今日挖掘里穿插，到期错题仍按选择题复习，
+      // 免得孩子一进来就又是回忆又是打字。呈现方式随这一趟一起存，刷新不丢。
+      var asFill = !!(mode === 'daily' && !review && q.fill && fillUsed < fillLeft);
+      if (asFill) { fillUsed++; S.fillDay.n++; }
+      items.push({ q: q, isReview: review, asFill: asFill });
     });
+    if (fillUsed) persist();
     return { mode: mode, label: label, note: note, items: items, count: items.length };
   }
 
@@ -651,7 +664,12 @@
       spec: r.spec || {},
       label: r.label, note: r.note || '', mode: r.mode,
       isRedo: !!r.isRedo,
-      items: r.items.map(function (it) { return { q: it.q.id, isReview: !!it.isReview }; }),
+      challenge: !!r.challenge,
+      fillMode: r.fillMode === 'choice' ? 'choice' : 'fill',
+      fillInput: r.fillInput || '',
+      items: r.items.map(function (it) {
+        return { q: it.q.id, isReview: !!it.isReview, asFill: !!it.asFill };
+      }),
       idx: r.idx || 0,
       results: r.results || [],
       selected: r.selected,
@@ -664,13 +682,16 @@
     if (!p || !p.items || !p.items.length || p.phase === 'done') return null;
     var items = p.items.map(function (x) {
       var q = window.YW_Q_BY_ID[x.q];
-      return q ? { q: q, isReview: !!x.isReview } : null;
+      return q ? { q: q, isReview: !!x.isReview, asFill: !!x.asFill } : null;
     }).filter(Boolean);
     if (!items.length) return null;
     return {
       spec: p.spec || {}, label: p.label || '练习', note: p.note || '',
       mode: p.mode || 'daily', items: items,
       isRedo: !!p.isRedo,
+      challenge: !!p.challenge,
+      fillMode: p.fillMode === 'choice' ? 'choice' : 'fill',
+      fillInput: p.fillInput || '',
       idx: Math.min(p.idx || 0, items.length - 1),
       results: (p.results || []).slice(0, items.length),
       selected: p.selected,
@@ -678,6 +699,17 @@
     };
   }
   function clearRound() { S.pendingRound = null; persist(); }
+
+  // 今日挑战徽章：只留在本地档案里做纪念，不加砖、不进云端快照。
+  function markChallenge(date) {
+    var d = date || todayKey();
+    S.badges = S.badges || {};
+    var first = !S.badges[d];
+    S.badges[d] = true;
+    persist();
+    return first;
+  }
+  function hasChallenge(date) { return !!(S.badges || {})[date || todayKey()]; }
 
   // 上一趟结果：结算完即回首页，结果作为一条可收起的条留在首页顶部
   function setLastRun(r) {
@@ -734,7 +766,7 @@
     buildDaySnapshot: buildDaySnapshot, finalizeDay: finalizeDay, markSynced: markSynced,
     applySnapshot: applySnapshot, pickRound: pickRound, buildRound: buildRound,
     saveRound: saveRound, loadRound: loadRound, clearRound: clearRound, setDigScope: setDigScope,
-    setLastRun: setLastRun,
+    setLastRun: setLastRun, markChallenge: markChallenge, hasChallenge: hasChallenge,
     exportAll: exportAll, importAll: importAll, resetLocal: resetLocal,
     isFallback: function () { return useLS; },
     profileList: profileList, switchProfile: switchProfile, createProfile: createProfile,

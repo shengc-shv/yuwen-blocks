@@ -9,6 +9,9 @@
   var tab = 'practice';
   var round = null;
   var toastTimer = null;
+  var challengeTimer = null;
+  var challengeLeft = 30;
+  var endToast = null;   // 一趟结束时才给的提示，优先级高于普通答对提示
   var ui = {
     pastGrade: 0, topicKp: '', topicScope: 'all', scopeKey: 'midterm',
     wrongFilter: 'all', cloudSaves: [], cloudOk: false, cloudMsg: '',
@@ -28,6 +31,38 @@
     toastTimer = setTimeout(function () { toastEl.classList.add('hidden'); }, 2800);
   }
   function setSync(msg, cls) { syncBar.textContent = msg; syncBar.className = 'sync-bar ' + (cls || ''); }
+
+  // 今日挑战的倒计时只展示、不打断：到零也能把题做完，只是少一分紧张感。
+  function stopChallengeTimer() {
+    if (challengeTimer) { clearInterval(challengeTimer); challengeTimer = null; }
+  }
+  function updateChallengeUI() {
+    var t = document.getElementById('chal-time');
+    if (t) t.textContent = challengeLeft;
+    var f = document.getElementById('chal-fill');
+    if (f) f.style.width = (challengeLeft / 30 * 100) + '%';
+  }
+  function startChallengeTimer() {
+    stopChallengeTimer();
+    if (window.__NO_TIMER) return;   // 自动化验证时关掉计时，避免虚拟时间空转
+    challengeLeft = 30;
+    updateChallengeUI();
+    challengeTimer = setInterval(function () {
+      if (!round || !round.challenge) { stopChallengeTimer(); return; }
+      challengeLeft = Math.max(0, challengeLeft - 1);
+      updateChallengeUI();
+      if (challengeLeft === 0) {
+        stopChallengeTimer();
+        toast('时间到，慢慢做完就好，砖照常算');
+      }
+    }, 1000);
+  }
+  function comboBurst(n) {
+    document.body.classList.remove('combo-burst');
+    void document.body.offsetWidth;
+    document.body.classList.add('combo-burst');
+    setTimeout(function () { document.body.classList.remove('combo-burst'); }, 1000);
+  }
   function dLabel(k) { return k ? k.slice(5, 7) + '月' + k.slice(8, 10) + '日' : '—'; }
   function kpName(k) { return (window.YW_KP[k] || { label: k }).label; }
   function dimName(d) { return (window.YW_DIMS[d] || { label: '综合' }).label; }
@@ -393,17 +428,21 @@
       return;
     }
     pendingStart = null;
+    stopChallengeTimer();
     St.clearRound();
     var r = St.buildRound(spec);
     if (!r.items.length) { toast('这个范围里还没有题目，换个范围试试'); return; }
     round = {
-      spec: spec, label: r.label, note: r.note, mode: r.mode, items: r.items,
+      spec: spec, label: spec.label || r.label, note: r.note, mode: r.mode, items: r.items,
       idx: 0, selected: null, phase: 'ask', results: [],
+      challenge: !!spec.challenge,
+      fillMode: 'fill', fillInput: '',
     };
     tab = 'practice';
     St.saveRound(round);
     closeOverlay();
     render();
+    if (round.challenge) startChallengeTimer();
     window.scrollTo(0, 0);
   }
 
@@ -498,7 +537,9 @@
           '<div class="stat-box"><b>', today.careless, '</b><span>看错了</span></div>',
         '</div>',
         '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 题）</button>',
-        '<p class="tiny" style="margin-top:8px">没有倒计时；答错才会用巡查镜复盘。',
+        '<button class="btn wide challenge-btn" data-action="start-challenge">今日挑战 · 30 秒 5 题',
+          St.hasChallenge() ? '<span class="badge-done">今天已拿到徽章</span>' : '', '</button>',
+        '<p class="tiny" style="margin-top:8px">挑战只是换个节奏，时间到也能把题做完；徽章只作纪念，不加砖。',
           St.isGuest() ? '游客模式：这一趟不存进度。' : '做到一半会自动存成待办。', '</p>',
         '<p class="tiny">同一道题今天只算一块砖，做新题才有新伙伴；「一次就对」只算第一次就答对的。</p>',
       '</div>',
@@ -530,6 +571,29 @@
       return '<button type="button" class="' + cls + '" data-action="opt" data-idx="' + i + '"' + (fb ? ' disabled' : '') + '>' +
              '<span class="key">' + 'ABCD'[i] + '</span><span>' + esc(o) + '</span></button>';
     }).join('');
+    // 「补一个字」：只在出题时标记的题上出现，打不出来可以随时切回选项。
+    var useFill = !!(it.asFill && q.fill && round.fillMode !== 'choice' && !fb);
+    var answerHtml = opts;
+    if (useFill) {
+      answerHtml = [
+        '<div class="fill-box">',
+          '<label class="tiny" for="fill-input">空里该写什么？写一个字就行</label>',
+          '<input id="fill-input" class="fill-input" type="text" maxlength="6" autocomplete="off"',
+            ' value="', esc(round.fillInput || ''), '" placeholder="在这里写" />',
+          '<div class="btn-row" style="margin-top:10px">',
+            '<button type="button" class="btn primary" data-action="fill-submit">写好啦，提交</button>',
+            '<button type="button" class="btn ghost" data-action="fill-choice">打不出来，看选项</button>',
+          '</div>',
+        '</div>',
+      ].join('');
+    }
+    var challengeHtml = round.challenge ? [
+      '<div class="challenge-bar">',
+        '<span>今日挑战 · <b id="chal-time">', challengeLeft, '</b> 秒</span>',
+        '<div class="challenge-track"><i id="chal-fill" style="width:', (challengeLeft / 30 * 100), '%"></i></div>',
+        '<span class="tiny">时间到也能做完</span>',
+      '</div>',
+    ].join('') : '';
     var src = sourceOf(q);
     var feedback = '';
     if (fb) {
@@ -544,15 +608,17 @@
     }
     view.innerHTML = [
       '<div class="section-title"><h2>', esc(round.label), '</h2><span class="tiny">', round.idx + 1, ' / ', round.items.length, ' 题</span></div>',
-      '<div class="round-head"><div class="round-dots">', dots, '</div><span class="tiny">不用赶时间</span></div>',
+      challengeHtml,
+      '<div class="round-head"><div class="round-dots">', dots, '</div><span class="tiny">',
+        round.challenge ? '挑战进行中' : '不用赶时间', '</span></div>',
       feedback,
       '<div class="card">',
         '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
         '<span class="q-meta">', esc(dimName(q.dim)), ' · ', esc(kpName(q.kp)), '</span>',
         '<div class="q-stem">', esc(q.stem), '</div>',
-        '<div class="options">', opts, '</div>',
-        '<div class="action-bar">',
-          '<button class="btn primary wide" data-action="submit"' + (round.selected === null ? ' disabled' : '') + '>确认提交并继续</button>',
+        answerHtml,
+        useFill ? '' : '<div class="action-bar">' +
+          '<button class="btn primary wide" data-action="submit"' + (round.selected === null ? ' disabled' : '') + '>确认提交并继续</button>' +
         '</div>',
       '</div>',
       '<p class="tiny" style="text-align:center">', esc(round.note), '</p>',
@@ -627,15 +693,54 @@
     var last = { qid: q.id, correct: correct, type: type, selected: sel };
     round.results.push(last);
     round.phase = 'ask';
+    // 连对只给反馈，不加砖、不改计分口径；每三题庆祝一次
+    var chain = 0;
+    for (var ci = round.results.length - 1; ci >= 0 && round.results[ci].correct; ci--) chain++;
+    var comboHit = chain >= 3 && chain % 3 === 0;
+    if (comboHit) comboBurst(chain);
     // 一次点击即推进：不再停在「下一块」中转页
     advance();
     // 只有答错才用快照复盘刚才那题；下一块已经在下面等着了
-    if (!correct) openMirror(last, q);
-    else if (St.isGuest()) toast('答对了');
-    else if (leveled) toast('第 ' + (S().level - 1) + ' 座塔住满了！升到 Lv.' + S().level + '，新塔开工');
-    else if (gained) toast('答对了，来了一位新伙伴');
-    else toast('答对了，这道题今天已经算过砖了');
+    var msg;
+    if (!correct) msg = null;
+    else if (St.isGuest()) msg = '答对了';
+    else if (leveled) msg = '第 ' + (S().level - 1) + ' 座塔住满了！升到 Lv.' + S().level + '，新塔开工';
+    else if (gained) msg = '答对了，来了一位新伙伴';
+    else msg = '答对了，这道题今天已经算过砖了';
+    if (comboHit) msg = '连对 ' + chain + ' 题！伙伴们排成队了';
+    if (!correct) {
+      openMirror(last, q);
+      if (endToast) { toast(endToast); endToast = null; }
+    } else if (endToast) { toast(endToast); endToast = null; }
+    else if (msg) toast(msg);
     syncDate(payload);
+  }
+
+  // 「补一个字」的输入判定：把输入的字映射回原来的选项索引，
+  // 这样计分、错因归类、错题集、掌握度全部沿用原逻辑，不另起一套。
+  function submitFill() {
+    if (!round || !round.items[round.idx].asFill) return;
+    var q = round.items[round.idx].q;
+    var el = document.getElementById('fill-input');
+    var raw = el ? el.value.trim() : '';
+    if (!raw) { toast('先写一个字试试'); if (el) el.focus(); return; }
+    var norm = raw.replace(/[\s，。！？、：；"'·]/g, '');
+    var hit = (q.fill.accepts || []).some(function (a) {
+      return String(a).replace(/\s/g, '') === norm;
+    });
+    round.selected = hit ? q.answer
+      : (q.trap && q.trap.length ? q.trap[0] : (q.answer + 1) % q.options.length);
+    round.fillInput = raw;
+    St.saveRound(round);
+    submitAnswer();
+  }
+  function fillToChoice() {
+    if (!round) return;
+    round.fillMode = 'choice';
+    round.selected = null;
+    round.fillInput = '';
+    St.saveRound(round);
+    render();
   }
 
   function advance() {
@@ -649,9 +754,18 @@
           results: round.results.slice(), at: St.todayKey(),
         });
       }
+      if (round.challenge) {
+        stopChallengeTimer();
+        var firstBadge = St.markChallenge();
+        endToast = firstBadge ? '今日挑战完成，拿到一枚徽章！' : '今日挑战完成！';
+      }
       round = null;
       St.clearRound();
-    } else { round.idx += 1; round.selected = null; round.phase = 'ask'; St.saveRound(round); }
+    } else {
+      round.idx += 1; round.selected = null; round.phase = 'ask';
+      round.fillInput = '';
+      St.saveRound(round);
+    }
     render();
     window.scrollTo(0, 0);
   }
@@ -894,13 +1008,19 @@
         });
         break;
       case 'start-daily': startRound({ mode: 'daily', count: 5, unit: S().digUnit, lesson: S().digLesson }); break;
+      case 'start-challenge':
+        startRound({ mode: 'daily', count: 5, unit: S().digUnit, lesson: S().digLesson,
+                     challenge: true, label: '今日挑战' });
+        break;
       case 'resume-round': {
         var pr = St.loadRound();
         if (!pr) { toast('这一趟已经不在了'); render(); break; }
-        round = pr; closeOverlay(); render(); window.scrollTo(0, 0);
+        round = pr; closeOverlay(); render();
+        if (round.challenge) startChallengeTimer();
+        window.scrollTo(0, 0);
         break;
       }
-      case 'drop-round': St.clearRound(); render(); toast('已放弃这一趟'); break;
+      case 'drop-round': stopChallengeTimer(); round = null; St.clearRound(); render(); toast('已放弃这一趟'); break;
       case 'start-past': startRound({ mode: 'past', count: 6, grade: Number(d.grade) || 0 }); break;
       case 'start-mode':
         startRound({ mode: d.mode, count: d.mode === 'full' ? 10 : 8,
@@ -927,7 +1047,9 @@
         break;
       }
       case 'submit': submitAnswer(); break;
-      case 'next': advance(); break;
+      case 'fill-submit': submitFill(); break;
+      case 'fill-choice': fillToChoice(); break;
+      case 'next': advance(); if (endToast) { toast(endToast); endToast = null; } break;
       case 'again': {
         var lr = S().lastRun;
         if (!lr || !lr.spec) { toast('先在上面选个范围'); break; }
