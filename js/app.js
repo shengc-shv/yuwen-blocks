@@ -63,6 +63,21 @@
     document.body.classList.add('combo-burst');
     setTimeout(function () { document.body.classList.remove('combo-burst'); }, 1000);
   }
+  // 像素竞技场：答对己方冲锋、答错 BOSS 反击。纯 CSS 动画，
+  // 只在画面层加 class，不碰血量、计分和错题逻辑；动画结束自动清掉。
+  function arenaHit(correct, damage) {
+    var arena = document.getElementById('arena');
+    if (!arena) return;             // 可能已经打完结算了
+    arena.classList.remove('hit-hero', 'hit-enemy');
+    void arena.offsetWidth;
+    arena.classList.add(correct ? 'hit-enemy' : 'hit-hero');
+    var dmg = document.getElementById('dmg');
+    if (dmg) { dmg.textContent = '-' + damage; }
+    setTimeout(function () {
+      arena.classList.remove('hit-hero', 'hit-enemy');
+      if (dmg) dmg.textContent = '';
+    }, 720);
+  }
   function dLabel(k) { return k ? k.slice(5, 7) + '月' + k.slice(8, 10) + '日' : '—'; }
   function kpName(k) { return (window.YW_KP[k] || { label: k }).label; }
   function dimName(d) { return (window.YW_DIMS[d] || { label: '综合' }).label; }
@@ -732,16 +747,31 @@
       ].join('');
     }
     var bossHtml = round.battle === 'boss' ? [
-      '<div class="boss-battle">',
-        '<div class="boss-side">',
-          '<svg class="boss-ico"><use href="#mob-', BOSS_ART[round.bossKey] || 'stone', '"></use></svg>',
-          '<div class="hp-line"><span>boss</span><div class="hp-track"><i class="hp-boss" style="width:',
+      '<div class="arena" id="arena">',
+        '<div class="arena-top">',
+          '<div class="hp-side"><span>我</span><div class="hp-track"><i class="hp-me" style="width:',
+            Math.round((round.myHp || 0) / (round.myHpMax || 1) * 100), '%"></i></div><b>',
+            round.myHp, '/', round.myHpMax, '</b></div>',
+          '<div class="hp-side boss-side"><b>', round.bossHp, '/', round.bossHpMax, '</b>',
+            '<div class="hp-track"><i class="hp-boss" style="width:',
             Math.round((round.bossHp || 0) / (round.bossHpMax || 1) * 100), '%"></i></div>',
-            '<b>', round.bossHp, '/', round.bossHpMax, '</b></div>',
-          '<div class="hp-line"><span>我的</span><div class="hp-track"><i class="hp-me" style="width:',
-            Math.round((round.myHp || 0) / (round.myHpMax || 1) * 100), '%"></i></div>',
-            '<b>', round.myHp, '/', round.myHpMax, '</b></div>',
+            '<span>BOSS</span></div>',
         '</div>',
+        '<div class="arena-floor">',
+          '<div class="fighter hero" id="f-hero">',
+            '<svg class="fighter-head"><use href="#mob-moss"></use></svg>',
+            '<div class="fighter-body hero-body"></div>',
+            '<div class="fighter-arm"></div>',
+          '</div>',
+          '<div class="fighter enemy" id="f-enemy">',
+            '<svg class="fighter-head"><use href="#mob-', BOSS_ART[round.bossKey] || 'stone', '"></use></svg>',
+            '<div class="fighter-body enemy-body"></div>',
+            '<div class="fighter-arm"></div>',
+          '</div>',
+          '<div class="slash" id="slash"></div>',
+          '<div class="dmg" id="dmg"></div>',
+        '</div>',
+        '<div class="arena-tip">答对就冲上去打，答错就要挨一下</div>',
       '</div>',
     ].join('') : '';
     var challengeHtml = round.challenge ? [
@@ -855,6 +885,20 @@
     if (round.battle === 'boss') {
       if (correct) round.bossHp = Math.max(0, (round.bossHp || 0) - 1);
       else round.myHp = Math.max(0, (round.myHp || 0) - 1);
+      arenaHit(correct, 1);
+      round.phase = 'anim';               // 动画期间锁住输入，防止连点跳过战斗
+      var over = round.bossHp <= 0 ? 'win'
+        : (round.myHp <= 0 || round.idx + 1 >= round.items.length) ? 'lose' : null;
+      toast(correct ? '命中！' : '被反击了，注意看解析');
+      syncDate(payload);
+      setTimeout(function () {
+        if (!round || round.battle !== 'boss') return;
+        round.phase = 'ask';
+        if (over) { finishBoss(over); return; }
+        advance();
+        if (!correct) openMirror(last, q);
+      }, 700);
+      return;
     }
     // 连对只给反馈，不加砖、不改计分口径；每三题庆祝一次
     var chain = 0;
