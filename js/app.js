@@ -438,14 +438,10 @@
   /* ---------------- BOSS 战 ---------------- */
   var BOSS_NAMES = { u1: '苔刺球', u2: '沙岩怪', u3: '影叶狐', u4: '糖霜巨', u5: '露珠怪',
                      u6: '海岩龘', u7: '风铃兽', u8: '铁甲犀', midterm: '墨影将', final: '墨影龙' };
-  // 每个 BOSS 一个独立的自绘像素形象（见 index.html 的 boss-* symbol）
+  // 每个 BOSS 一个整只的自绘全身像素形象（见 index.html 的 boss-* symbol）
   var BOSS_ART = { u1: 'boss-u1', u2: 'boss-u2', u3: 'boss-u3', u4: 'boss-u4',
                    u5: 'boss-u5', u6: 'boss-u6', u7: 'boss-u7', u8: 'boss-u8',
                    midterm: 'boss-mid', final: 'boss-final' };
-  // 身体配色跟形象同一个色系，避免十个 boss 打起来都是同一个紫色方块身体
-  var BOSS_TINT = { u1: '#6abe30', u2: '#c2a878', u3: '#534ab7', u4: '#f4c0d1',
-                    u5: '#378add', u6: '#185fa5', u7: '#9fe1cb', u8: '#888780',
-                    midterm: '#633806', final: '#3c3489' };
 
   function startBoss(key) {
     var spec = St.bossSpec(key);
@@ -777,14 +773,12 @@
         '</div>',
         '<div class="arena-floor">',
           '<div class="fighter hero" id="f-hero">',
-            '<svg class="fighter-head"><use href="#mob-moss"></use></svg>',
-            '<div class="fighter-body hero-body"></div>',
-            '<div class="fighter-arm"></div>',
+            '<svg class="fighter-sprite" viewBox="0 0 32 32" shape-rendering="crispEdges" aria-hidden="true">',
+              '<use href="#hero-moss"></use></svg>',
           '</div>',
           '<div class="fighter enemy" id="f-enemy">',
-            '<svg class="fighter-head"><use href="#', BOSS_ART[round.bossKey] || 'boss-u1', '"></use></svg>',
-            '<div class="fighter-body enemy-body" style="background:', BOSS_TINT[round.bossKey] || '#b585b5', '"></div>',
-            '<div class="fighter-arm"></div>',
+            '<svg class="fighter-sprite" viewBox="0 0 32 32" shape-rendering="crispEdges" aria-hidden="true">',
+              '<use href="#', BOSS_ART[round.bossKey] || 'boss-u1', '"></use></svg>',
           '</div>',
           '<div class="slash" id="slash"></div>',
           '<div class="dmg" id="dmg"></div>',
