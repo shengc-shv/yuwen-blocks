@@ -343,7 +343,7 @@
       await St.init();
       Cl.init();
       St.setNoAnim(S().noAnim);
-      document.getElementById('edition-label').textContent = '三年级上 · 人教版 2026 秋版';
+      document.getElementById('edition-label').textContent = window.YW_EDITION;
       // 第一次打开（还没选身份）：先问「你以什么身份登录」，选完再同步
       if (St.needIdentity()) {
         tab = 'practice';
@@ -595,6 +595,7 @@
             '<span class="loot-tier">' + gt.label + '礼物</span>' +
             '<b>' + esc(result.gift.name) + '</b>' +
             (perfect ? '<span class="tiny">满血通关，多掷了一次</span>' : '') +
+            '<span class="tiny">不想要？回大陆分解成 ' + St.shardSell(result.gift.tier) + ' 块碎片</span>' +
           '</div>' : '',
       won ? '<p class="tiny">段位 ' + esc(rk.name) + ' · 经验 ' + rk.xp +
              (result ? ' · 保底再 ' + result.pityLeft + ' 次必出精良' : '') + '</p>' : '',
@@ -618,7 +619,44 @@
       '<span class="tier-dot"></span>' +
       '<b>' + esc(x.name || x.prize || '礼物') + '</b>' +
       '<span class="tier-label">' + meta.label + '</span>' +
-      '<span class="tiny">来自 ' + esc(BOSS_NAMES[x.from] || x.from) + ' · ' + esc(dLabel(x.at)) + '</span></div>';
+      '<span class="tiny">来自 ' + esc(x.from === 'exchange' ? '碎片兑换' : (BOSS_NAMES[x.from] || x.from)) +
+        ' · ' + esc(dLabel(x.at)) + '</span>' +
+      (x.uid ? '<button class="btn sm ghost sell-btn" data-action="loot-sell" data-uid="' +
+        esc(x.uid) + '">分解 +' + St.shardSell(tier) + '</button>' : '') + '</div>';
+  }
+
+  // 碎片商店：用分解来的字块碎片兑换礼物库里还存在的礼物
+  function openShardShop() {
+    if (St.isGuest()) { toast('取个昵称才能攒碎片'); return; }
+    refreshGiftPool();
+    var have = St.shards();
+    var pool = St.giftPool().slice();
+    var groups = {};
+    St.GIFT_TIERS.forEach(function (t) { groups[t] = []; });
+    pool.forEach(function (g) { (groups[g.tier] || groups.white).push(g); });
+    var blocks = St.GIFT_TIERS.map(function (t) {
+      var meta = St.GIFT_TIER[t], cost = St.shardBuy(t), items = groups[t];
+      return [
+        '<h3 class="tier-head tier-' + t + '">' + meta.label + ' · ' + cost + ' 碎片（' + items.length + ' 件）</h3>',
+        items.length ? items.map(function (g) {
+          var can = have >= cost;
+          return '<div class="loot-row tier-' + t + '"><span class="tier-dot"></span><b>' + esc(g.name) + '</b>' +
+            '<button class="btn sm ' + (can ? 'primary' : 'ghost') + '" data-action="shard-buy" data-id="' +
+            esc(g.id) + '"' + (can ? '' : ' disabled') + '>' + cost + ' 碎片</button></div>';
+        }).join('') : '<p class="tiny">这一档暂时没有礼物。</p>',
+      ].join('');
+    }).join('');
+    overlay([
+      '<h2>字块碎片商店</h2>',
+      '<div class="shard-bar"><span>我的碎片</span><b>', have, '</b></div>',
+      '<p class="muted">不想要的礼物可以分解成碎片：普通 +15 / 精良 +60 / 稀有 +150 / 传说 +300。',
+        '攒够了就能换任意一档想要的礼物，全档通兑。</p>',
+      blocks,
+      '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn" data-action="continent">回大陆</button>',
+        '<button class="btn ghost" data-action="close-overlay">收起</button>',
+      '</div>',
+    ].join(''));
   }
 
   function openContinent() {
@@ -637,7 +675,7 @@
         '<span class="tiny">' + (on ? St.leagueLeft(k) + ' 张券' : '未解锁') + '</span></button>';
     }).join('');
     var cards = St.bossList(league).map(function (b) {
-      var ready = St.trainingReady(b.key);
+      var ready = St.trainingReady(b.key, league);
       return '<button class="boss-card' + (b.beaten ? ' beaten' : '') + '" data-action="boss-fight" ' +
         'data-key="' + b.key + '" data-league="' + league + '">' +
         '<svg class="boss-ico"><use href="#' + BOSS_ART[b.key] + '"></use></svg>' +
@@ -661,6 +699,7 @@
       '<div class="boss-grid">', cards, '</div>',
       '<div class="btn-row" style="margin-top:12px">',
         '<button class="btn" data-action="training-board" data-league="' + league + '">训练场 · 不扣券</button>',
+        '<button class="btn" data-action="shard-shop">碎片商店（', St.shards(), '）</button>',
         '<button class="btn" data-action="gift-pool">礼物库（', St.giftPool().length, ' 件）</button>',
         '<button class="btn ghost" data-action="close-overlay">收起</button>',
       '</div>',
@@ -675,7 +714,7 @@
   function openTrainingBoard() {
     var league = ui.league;
     var cards = St.bossList(league).map(function (b) {
-      var ready = St.trainingReady(b.key);
+      var ready = St.trainingReady(b.key, league);
       return '<button class="train-card" data-action="training-start" data-key="' + b.key +
         '" data-league="' + league + '">' +
         '<svg class="boss-ico sm"><use href="#' + BOSS_ART[b.key] + '"></use></svg>' +
@@ -697,10 +736,12 @@
     var right = round.results.filter(function (r) { return r.correct; }).length;
     var pct = total ? Math.round(right / total * 100) : 0;
     var key = round.bossKey, league = round.league || 'normal';
-    var res = St.setTraining(key, pct, total);
+    var lgName = St.leagueInfo(league).name;
+    var res = St.setTraining(key, league, pct, total);
     var name = BOSS_NAMES[key] || 'boss';
-    var tip = pct >= 90 ? '可以去地狱试试了' : pct >= 80 ? '噩梦难度应该没问题'
-            : pct >= 60 ? '再练一轮就稳了' : '先把解析看懂，再来一遍';
+    // 建议只针对当前难度：普通练得好不代表噩梦、地狱也准备好了
+    var tip = pct >= 90 ? lgName + '这一档可以上场了' : pct >= 80 ? '再稳一轮就能上场'
+            : pct >= 60 ? '继续练，错的地方看解析' : '先把解析看懂，再来一遍';
     round = null; St.clearRound(); render();
     overlay([
       '<h2>训练完成 · ' + esc(name) + '</h2>',
@@ -1311,7 +1352,7 @@
   /* ---------------- 回忆录 · 复习中心 ---------------- */
   function renderPast() {
     var s = S();
-    var pastAll = window.YW_pastQuestions(s.grade);
+    var pastAll = window.YW_pastQuestions(s.grade, s.term);
     var pastWrong = Object.keys(s.wrong).filter(function (id) {
       var q = window.YW_Q_BY_ID[id], w = s.wrong[id];
       return q && q.grade < s.grade && !w.graduated;
@@ -1338,14 +1379,14 @@
     view.innerHTML = [
       '<div class="review-hero">',
         '<h2>回忆录</h2>',
-        '<p class="muted">把学过的都捞回来。当前 <span class="grade-big">', s.grade, ' 年级', s.term, '册</span>；低于当前年级的题目和旧错题会自动进这里，升到 4、5、6 年级不用搬家、不用导数据。</p>',
+        '<p class="muted">把学过的都捞回来。当前 <span class="grade-big">', s.grade, ' 年级', s.term, '册</span>；之前的册次和更早年级的题目、旧错题都会自动进这里，切换到新册不用搬家、不用导数据。</p>',
         '<div class="grade-row"><button data-action="past-grade" data-grade="0"' + (ui.pastGrade === 0 ? ' class="on"' : '') + '>全部过往</button>', gradeButtons, '</div>',
         '<p class="tiny">过往题库 ', pastAll.length, ' 道 · 其中历史错题 ', pastWrong, ' 道', grades.length ? '' : '（当前已是 1 年级，暂无更低年级题目）', '</p>',
         '<button class="btn primary wide" style="margin-top:10px" data-action="start-past" data-grade="' + ui.pastGrade + '">开始复习过往</button>',
       '</div>',
 
       '<div class="card"><h3>现在读几年级</h3>',
-        '<p class="muted">改了之后，原来年级的题目和错题立刻变成「回忆录」，机制不用改。</p>',
+        '<p class="muted">换年级或换册后，之前学过的题目和错题自动进「回忆录」，进度会从新册第一单元开始。</p>',
         '<div class="btn-row" style="margin-top:10px">',
           '<select id="grade-select" aria-label="当前年级">', gradeSel, '</select>',
           '<select id="term-select" aria-label="上册或下册"><option value="上"' + (s.term === '上' ? ' selected' : '') + '>上册</option><option value="下"' + (s.term === '下' ? ' selected' : '') + '>下册</option></select>',
@@ -1524,6 +1565,24 @@
       case 'training-board': openTrainingBoard(); break;
       case 'training-start': startTraining(d.key, d.league || ui.league, 5); break;
       case 'training-quick': startTraining(d.key, d.league || ui.league, 3); break;
+      case 'shard-shop': openShardShop(); break;
+      case 'loot-sell':
+        confirmSheet('分解这件礼物？', '分解后它会消失，换成字块碎片，碎片可以去商店换别的礼物。',
+          '分解换碎片', function () {
+            var r = St.sellLoot(d.uid);
+            toast(r.ok ? '分解成 ' + r.gain + ' 块碎片，现有 ' + r.total + ' 块' : (r.reason || '没分成'));
+            openContinent();
+          });
+        break;
+      case 'shard-buy':
+        confirmSheet('用碎片兑换？', '兑换成功后碎片会扣掉，礼物放进战利品。',
+          '确认兑换', function () {
+            var r = St.buyGift(d.id);
+            if (r.ok) toast('换到了「' + r.gift.name + '」，还剩 ' + r.left + ' 块碎片');
+            else toast(r.reason || '没换成');
+            openShardShop();
+          });
+        break;
       case 'gift-pool':
         openGiftPool();
         refreshGiftPool().then(function (changed) { if (changed) openGiftPool(); });
@@ -1707,8 +1766,16 @@
     if (t.id === 'grade-select' || t.id === 'term-select') {
       var g = document.getElementById('grade-select').value;
       var term = document.getElementById('term-select').value;
-      await St.setGrade(g, term); render();
-      toast('已切到 ' + g + ' 年级' + term + '册，旧年级内容自动进入回忆录');
+      var oldBook = (window.YW_BOOK_OF || function () { return null; })(S().grade, S().term);
+      await St.setGrade(g, term);
+      var newBook = (window.YW_BOOK_OF || function () { return null; })(Number(g), term);
+      // 换册后把进度重置到新册第一单元，避免沿用旧册的课号
+      if (newBook && (!oldBook || newBook.id !== oldBook.id)) {
+        await St.setProgress(1, (newBook.units[0].lessons[0] || {}).n || 0);
+      }
+      render();
+      toast(newBook ? ('已切到 ' + newBook.edition + '，旧内容自动进回忆录')
+                    : ('已切到 ' + g + ' 年级' + term + '册，这一册题库还在准备中'));
     } else if (t.id === 'progress-unit') {
       var pu = Number(t.value);
       var puObj = window.YW_UNITS.filter(function (x) { return x.id === pu; })[0];

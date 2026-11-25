@@ -70,9 +70,9 @@
       // n = 当天已经出过几道「打字」题（填空），全天最多两道；
       // kinds = 当天出过的输出题类型，用来轮换 spot/fill/order，避免连着几趟同一种。
       fillDay: { d: '', n: 0, kinds: [] },
-      // BOSS 战利品：礼物库在云端（全局共享，只有家长账号能写），这里只缓存一份；
-      // 战利品只作收藏，不加砖、不进云端快照。
-      prizePool: [], loot: [], bossDone: {}, giftPool: [], giftPoolAt: '',
+      // BOSS 战利品：礼物库在云端（全局共享，只有家长账号能写），这里只缓存一份。
+      // 战利品可分解成字块碎片、碎片可兑换礼物；二者都有价值，随云端日快照走。
+      prizePool: [], loot: [], shards: 0, bossDone: {}, giftPool: [], giftPoolAt: '',
       // 字块大陆三难度进度（老存档缺这个字段时由 leagueState() 自动补默认值）
       league: null,
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
@@ -92,6 +92,17 @@
   // 全新安装时没有默认使用者：先让用户选身份（已有昵称 / 新昵称 / 游客）
   function rootDefaults() {
     return { v: 3, activeId: null, profiles: {} };
+  }
+
+  // 当前册次：组卷、单元名、BOSS 卡都依赖它；切档案/切年级后必须同步
+  function syncBookContext() {
+    if (!window.YW_BOOK_OF || !S) return;
+    var b = window.YW_BOOK_OF(S.grade, S.term);
+    window.__YW_CURRENT_BOOK__ = b ? b.id : '';
+    if (b) {
+      var CN = ['零', '一', '二', '三', '四', '五', '六'];
+      window.YW_EDITION = (CN[b.grade] || b.grade) + '年级' + b.term + '册 · 人教统编版';
+    }
   }
 
   /* ---------- 日期：唯一入口 ---------- */
@@ -237,6 +248,9 @@
       S = guestState();
       guest = true;
     }
+    // 老存档的战利品没有 uid，启动就补齐，否则分解按钮不会出现
+    if (!guest) ensureLootIds();
+    syncBookContext();
     await persist();
     return S;
   }
@@ -363,6 +377,11 @@
                    final: (S.examScope || {}).final || [1, 2, 3, 4, 5, 6, 7, 8] },
       daily: S.daily || {},
       today: S.daily[d] || { attempts: 0, correct: 0, careless: 0, blocks: 0 },
+      // 碎片与战利品有真实价值，换设备必须带走
+      shards: S.shards || 0,
+      loot: (S.loot || []).map(function (x) {
+        return { uid: x.uid, name: x.name, tier: x.tier, from: x.from, at: x.at, league: x.league };
+      }),
       // 字块大陆进度：解锁/征服/段位/准备度是长期成长，必须能换设备带走。
       // 券与连对是每日配额，恢复时只在「快照日期就是今天」才生效。
       league: (function () {
@@ -422,6 +441,14 @@
       S.digLesson = normalizeLesson(S.digUnit, p.dig.lesson, true);
     }
     if (p.examScope) S.examScope = p.examScope;
+    // 碎片与战利品：快照是「当天全量」，以快照为准；老 loot 没有 uid 时补齐
+    if (typeof p.shards === 'number') S.shards = p.shards;
+    if (p.loot) {
+      S.loot = p.loot.map(function (x) {
+        return { uid: x.uid, name: x.name, tier: x.tier, from: x.from, at: x.at, league: x.league };
+      });
+      ensureLootIds();
+    }
     // 字块大陆：长期成长取并集 / 取较大值，避免旧设备的一日快照把新进度盖回去；
     // 每日券只有快照日期就是今天才接管。
     if (p.league) {
@@ -595,7 +622,10 @@
     spec = spec || {};
     var mode = spec.mode || 'daily';
     var n = spec.count || (mode === 'exam' ? 10 : mode === 'full' ? 10 : 5);
-    var all = window.YW_QUESTIONS;
+    // 默认题池锁定当前册次：回忆录/过往专项才用全库，避免三上题混进三下 BOSS 战
+    var all = spec.scope === 'past' || mode === 'past'
+      ? window.YW_QUESTIONS
+      : window.YW_QUESTIONS.filter(function (q) { return window.YW_IS_CURRENT ? window.YW_IS_CURRENT(q, S.grade, S.term) : true; });
     var wrongIds = Object.keys(S.wrong).filter(isWrong);
     var picked = [], label = '今日挖掘', note = '';
 
@@ -606,7 +636,7 @@
       var due = dueWrong().slice(0, 2).map(function (id) { return window.YW_Q_BY_ID[id]; }).filter(Boolean);
       var seen = {}; due.forEach(function (q) { seen[q.id] = 1; });
       var need = Math.max(0, n - due.length);
-      var cur = window.YW_currentQuestions(S.grade).filter(function (q) { return !seen[q.id]; });
+      var cur = window.YW_currentQuestions(S.grade, S.term).filter(function (q) { return !seen[q.id]; });
       var inLesson = cur.filter(function (q) { return q.unit === digU && (!digL || q.lesson === digL); });
       var inUnit = cur.filter(function (q) { return q.unit === digU; });
       var learned = cur.filter(function (q) { return q.unit <= digU; });
@@ -622,7 +652,7 @@
              (primary.length < need ? ' · 本课题目不够，已用本单元补齐' : '');
     } else if (mode === 'past') {
       label = '回忆录 · 复习';
-      var past = window.YW_pastQuestions(S.grade);
+      var past = window.YW_pastQuestions(S.grade, S.term);
       if (spec.grade) past = past.filter(function (q) { return q.grade === spec.grade; });
       var pw = wrongIds.map(function (id) { return window.YW_Q_BY_ID[id]; })
         .filter(function (q) { return q && q.grade < S.grade && (!spec.grade || q.grade === spec.grade); });
@@ -638,7 +668,7 @@
       note = '错题 + 掌握度低于 60 的知识点';
     } else if (mode === 'full') {
       label = '全面复习';
-      picked = balanced(spec.scope === 'past' ? window.YW_pastQuestions(S.grade) : window.YW_currentQuestions(S.grade), n);
+      picked = balanced(spec.scope === 'past' ? window.YW_pastQuestions(S.grade, S.term) : window.YW_currentQuestions(S.grade, S.term), n);
       note = '按单元 / 年级均衡覆盖';
     } else if (mode === 'topic') {
       label = spec.training ? '训练场 · 单元小 boss'
@@ -669,8 +699,8 @@
             : spec.bossKey ? ('BOSS 战 · ' + ex.label) : ex.label;
       var units = S.examScope[ex.key] || ex.units;
       var epool = spec.league === 'hell'
-        ? window.YW_currentQuestions(S.grade)
-        : window.YW_currentQuestions(S.grade, units);
+        ? window.YW_currentQuestions(S.grade, S.term)
+        : window.YW_currentQuestions(S.grade, S.term, units);
       picked = leaguePick(epool, spec.league, spec.count || ex.count);
       note = (spec.league === 'hell' ? '地狱 · 全册随机 + 错题薄弱' : ex.desc) +
              ' · 当前范围：第 ' + (spec.league === 'hell' ? '1–' + (S.progress.unit || 8) : units.join('、')) + ' 单元';
@@ -707,7 +737,7 @@
       [].concat(typeof inLesson !== 'undefined' ? inLesson : [],
                 typeof inUnit !== 'undefined' ? inUnit : [],
                 typeof learned !== 'undefined' ? learned : [],
-                window.YW_currentQuestions(S.grade)).forEach(function (q) {
+                window.YW_currentQuestions(S.grade, S.term)).forEach(function (q) {
         if (q && !seenPool[q.id]) { seenPool[q.id] = 1; pool.push(q); }
       });
       var pickedIds = {};
@@ -947,6 +977,13 @@
     L.unlocked = L.unlocked || { normal: true, nightmare: false, hell: false };
     L.tickets = L.tickets || { normal: 5, nightmare: 3, hell: 1 };
     L.conquest = L.conquest || {}; L.train = L.train || {};
+    // 老存档迁移：旧版准备度的键是「u1」这种裸 bossKey，归到普通难度，别让孩子白练
+    Object.keys(L.train).forEach(function (k) {
+      if (k.indexOf(':') >= 0) return;
+      var dest = 'normal:' + k;
+      if (!L.train[dest] || (L.train[k].pct || 0) > (L.train[dest].pct || 0)) L.train[dest] = L.train[k];
+      delete L.train[k];
+    });
     return L;
   }
   function leagueInfo(k) { return LEAGUES[k] || LEAGUES.normal; }
@@ -997,10 +1034,15 @@
     return { first: first, unlocked: next };
   }
   // 训练场：不判胜负、不扣券、不掉礼物；只给准备度、经验和「连对 10 题赢回 1 张券」
-  function setTraining(bossKey, pct, total) {
+  // 准备度按「难度:boss」分开：普通练满分不代表地狱也准备好了。
+  function trainId(league, bossKey) {
+    return (LEAGUES[league] ? league : 'normal') + ':' + bossKey;
+  }
+  function setTraining(bossKey, league, pct, total) {
     var L = leagueState();
-    var prev = L.train[bossKey] || { pct: 0, n: 0 };
-    L.train[bossKey] = {
+    var id = trainId(league, bossKey);
+    var prev = L.train[id] || { pct: 0, n: 0 };
+    L.train[id] = {
       pct: Math.max(prev.pct || 0, pct), n: (prev.n || 0) + (total || 0), at: todayKey(),
     };
     gainXp((total || 0) * 2);
@@ -1016,8 +1058,8 @@
     persist();
     return { bonus: bonus, combo: L.combo || 0 };
   }
-  function trainingReady(bossKey) {
-    var t = (leagueState().train || {})[bossKey];
+  function trainingReady(bossKey, league) {
+    var t = (leagueState().train || {})[trainId(league, bossKey)];
     return t ? (t.pct || 0) : 0;
   }
 
@@ -1145,7 +1187,7 @@
     S.loot = S.loot || [];
     var got = null;
     if (conq.first && gift && gift.name) {
-      got = { name: gift.name, tier: gift.tier || 'white', from: key,
+      got = { uid: lootUid(), name: gift.name, tier: gift.tier || 'white', from: key,
               at: todayKey(), league: league };
       S.loot.push(got);
     }
@@ -1157,6 +1199,56 @@
       noGift: conq.first && !got, conquest: conq, pityLeft: pityLeft(),
     };
   }
+  /* ---------- 字块碎片：分解战利品 → 攒碎片 → 兑换想要的礼物 ----------
+   * 分解 = 档位价值 ×3（普通 15 / 精良 60 / 稀有 150 / 传说 300）
+   * 兑换 = 档位价值 ×10（普通 50 / 精良 200 / 稀有 500 / 传说 1000）
+   * 约 70% 损耗，避免「分解再兑换」无损套利；碎片与战利品都进云端日快照。
+   */
+  var GIFT_VALUE = { white: 5, green: 20, purple: 50, orange: 100 };
+  function shardSell(tier) { return (GIFT_VALUE[tier] || 5) * 3; }
+  function shardBuy(tier) { return (GIFT_VALUE[tier] || 5) * 10; }
+  function shards() { return S.shards || 0; }
+  function lootUid() {
+    return 'L' + Date.now().toString(36) + Math.floor(Math.random() * 1e5).toString(36);
+  }
+  // 老存档的战利品没有唯一编号，补上才能逐件分解（同名多件不会一起消失）
+  function ensureLootIds() {
+    S.loot = S.loot || [];
+    var changed = false;
+    S.loot.forEach(function (x) {
+      if (!x.uid) { x.uid = lootUid(); changed = true; }
+    });
+    if (typeof S.shards !== 'number') { S.shards = 0; changed = true; }
+    if (changed) persist();
+  }
+  function sellLoot(uid) {
+    ensureLootIds();
+    var idx = -1;
+    for (var i = 0; i < S.loot.length; i++) if (S.loot[i].uid === uid) { idx = i; break; }
+    if (idx < 0) return { ok: false, reason: '这件战利品已经不在了' };
+    var item = S.loot[idx];
+    var gain = shardSell(item.tier);
+    S.loot.splice(idx, 1);
+    S.shards = (S.shards || 0) + gain;
+    persist();
+    return { ok: true, gain: gain, name: item.name, tier: item.tier, total: S.shards };
+  }
+  function buyGift(id) {
+    var pool = giftPool();
+    var gift = null;
+    for (var i = 0; i < pool.length; i++) if (String(pool[i].id) === String(id)) { gift = pool[i]; break; }
+    if (!gift) return { ok: false, reason: '这件礼物已经下架了' };
+    var cost = shardBuy(gift.tier);
+    if ((S.shards || 0) < cost) return { ok: false, reason: '碎片不够，还差 ' + (cost - (S.shards || 0)) };
+    S.shards -= cost;
+    S.loot = S.loot || [];
+    var got = { uid: lootUid(), name: gift.name, tier: gift.tier, from: 'exchange',
+                at: todayKey(), league: '' };
+    S.loot.push(got);
+    persist();
+    return { ok: true, gift: got, cost: cost, left: S.shards };
+  }
+
   function bossBeaten(key) { return !!(S.bossDone || {})[key]; }
   function bossList(league) {
     league = league || 'normal';
@@ -1258,7 +1350,7 @@
     profileId: function () { return S.id; }, profileName: function () { return S.name; },
     setSpaceId: function (code) { S.spaceId = String(code || '').trim(); return persist(); },
     setProgress: setProgress,
-    setGrade: function (g, t) { S.grade = Number(g); S.term = t || S.term; return persist(); },
+    setGrade: function (g, t) { S.grade = Number(g); S.term = t || S.term; syncBookContext(); return persist(); },
     setExamScope: function (key, units) { S.examScope[key] = units; return persist(); },
     addPrize: addPrize, removePrize: removePrize, winBoss: winBoss,
     bossBeaten: bossBeaten, bossList: bossList, bossSpec: bossSpec,
@@ -1274,7 +1366,10 @@
     GIFT_TIERS: GIFT_TIERS, GIFT_TIER: GIFT_TIER, GIFT_WEIGHTS: GIFT_WEIGHTS,
     giftPool: giftPool, setGiftPool: setGiftPool, rollGift: rollGift, rollTier: rollTier,
     giftOwner: giftOwner, canManageGifts: canManageGifts, bossTierOf: bossTierOf,
-    pastCount: function () { return window.YW_pastQuestions(S.grade).length; },
+    // 字块碎片：分解 / 兑换
+    shards: shards, shardSell: shardSell, shardBuy: shardBuy,
+    sellLoot: sellLoot, buyGift: buyGift, ensureLootIds: ensureLootIds,
+    pastCount: function () { return window.YW_pastQuestions(S.grade, S.term).length; },
     setNoAnim: function (v) { S.noAnim = !!v; document.documentElement.classList.toggle('no-anim', !!v); return persist(); },
   };
 })();
