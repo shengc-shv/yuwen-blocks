@@ -17,6 +17,7 @@
     wrongFilter: 'all', cloudSaves: [], cloudOk: false, cloudMsg: '',
     lastSyncAt: '', lastError: '',
     mustIdentity: false,   // 首次进入必须选一个身份，不给「先不选」
+    league: 'normal',      // 字块大陆当前查看的难度
   };
 
   function S() { return St.get(); }
@@ -511,11 +512,14 @@
                    u5: 'boss-u5', u6: 'boss-u6', u7: 'boss-u7', u8: 'boss-u8',
                    midterm: 'boss-mid', final: 'boss-final' };
 
-  function startBoss(key) {
-    var spec = St.bossSpec(key);
+  function startBoss(key, league) {
+    league = St.LEAGUES[league] ? league : 'normal';
     if (St.isGuest()) { toast('取个昵称才能打 boss 和收战利品'); return; }
+    if (!St.leagueUnlocked(league)) { toast('先把上一档的任意 boss 打通关'); return; }
+    if (St.leagueLeft(league) <= 0) { toast('今天的挑战券用完了，去训练场练一练'); return; }
+    var spec = St.bossSpec(key, league);
     if (!spec) return;
-    // 打 boss 也走普通组卷，但题目范围固定；血条状态挂在这一趟上
+    if (!St.spendTicket(league)) return;
     startRound(Object.assign({}, spec, {
       battle: 'boss', bossKey: key,
       label: 'BOSS · ' + (BOSS_NAMES[key] || key),
@@ -523,15 +527,30 @@
     }));
   }
 
+  // 训练场：同一只 boss 的题域，不扣券、不掉礼物、不判胜负；做完给准备度报告
+  function startTraining(key, league, count) {
+    league = St.LEAGUES[league] ? league : 'normal';
+    if (St.isGuest()) { toast('取个昵称才能记训练成绩'); return; }
+    var spec = St.bossSpec(key, league);
+    if (!spec) return;
+    startRound(Object.assign({}, spec, {
+      count: Number(count) || 5, training: true, battle: '', bossKey: key,
+      label: '训练场 · ' + (BOSS_NAMES[key] || key),
+      note: '答错不打断，做完给你一份准备度报告。',
+    }));
+  }
+
   // 打到一半想撤：不判胜负、不发奖、不记错题，清掉这一趟回 boss 列表
   function quitBoss() {
     if (!round || round.battle !== 'boss') { render(); return; }
-    confirmSheet('退出这场战斗？', '这一趟的进度不保留，boss 会回到满血，下次重新开打。',
+    var lg = round.league || 'normal';
+    confirmSheet('退出这场战斗？', '这一趟的进度不保留，boss 回满血；这张挑战券会还给你。',
       '退出战斗', function () {
         round = null;
         St.clearRound();
+        St.refundTicket(lg);
         render();
-        openBossBoard();
+        openContinent();
       });
   }
 
@@ -547,33 +566,46 @@
 
   function finishBoss(outcome) {
     var won = outcome === 'win';
-    var key = round.bossKey;
+    var key = round.bossKey, league = round.league || 'normal';
     var name = BOSS_NAMES[key] || key;
-    var myHp = round.myHp, myHpMax = round.myHpMax;
+    var myHp = round.myHp, myHpMax = round.myHpMax, bossLeft = round.bossHp;
     var hits = round.results.filter(function (r) { return r.correct; }).length;
     // 满血通关 = 掉两次取更好的那档（暗黑式「运气」，奖励答得干净）
     var perfect = won && myHp === myHpMax;
-    var gift = won ? St.rollGift(key, { perfect: perfect }) : null;
-    var result = won ? St.winBoss(key, gift) : null;
+    var gift = won ? St.rollGift(key, { perfect: perfect, league: league }) : null;
+    var result = won ? St.winBoss(key, gift, { league: league }) : null;
+    var rk = St.rankInfo();
+    var canAgain = St.leagueUnlocked(league) && St.leagueLeft(league) > 0;
     round = null; St.clearRound();
     render();
     var gt = result && result.gift ? (St.GIFT_TIER[result.gift.tier] || St.GIFT_TIER.white) : null;
     overlay([
       '<h2>', won ? '打赢了 ' + esc(name) + '！' : '被 ' + esc(name) + ' 打退了', '</h2>',
-      '<p class="muted">答对 ', hits, ' 次 · 剩 ', won ? (myHp + ' / ' + myHpMax + ' 颗心') : '0 颗心',
-        ' · ', won ? 'boss 的心全打空了' : '这次没打过，下次再来', '</p>',
+      '<p class="muted">' + esc(St.leagueInfo(league).name) + ' · 答对 ', hits, ' 次 · ',
+        won ? ('剩 ' + myHp + ' / ' + myHpMax + ' 颗心') : ('boss 还剩 ' + bossLeft + ' 颗心'), '</p>',
+      won && result && result.conquest && result.conquest.first
+        ? '<p class="tiny">这一档首次征服！' + (result.conquest.unlocked
+            ? '解锁「' + esc(St.leagueInfo(result.conquest.unlocked).name) + '」难度。' : '图鉴 +1。') + '</p>' : '',
       won && result && result.repeat
-        ? '<p class="tiny">这个 boss 已经打过啦，战利品只能领一次；再来是练手。</p>' : '',
+        ? '<p class="tiny">这一档已经打过它了，礼物只领一次；再来涨经验。</p>' : '',
       won && result && result.noGift && !result.repeat
-        ? '<p class="tiny">礼物库还空着，让「' + esc(St.giftOwner()) + '」去「我的 → 礼物库」放几件礼物，下次打赢就能开箱。</p>' : '',
+        ? '<p class="tiny">礼物库还空着，让「' + esc(St.giftOwner()) + '」去「我的 → 礼物库」放几件礼物。</p>' : '',
       gt
         ? '<div class="loot-win tier-' + result.gift.tier + '">' +
             '<span class="loot-tier">' + gt.label + '礼物</span>' +
             '<b>' + esc(result.gift.name) + '</b>' +
             (perfect ? '<span class="tiny">满血通关，多掷了一次</span>' : '') +
           '</div>' : '',
+      won ? '<p class="tiny">段位 ' + esc(rk.name) + ' · 经验 ' + rk.xp +
+             (result ? ' · 保底再 ' + result.pityLeft + ' 次必出精良' : '') + '</p>' : '',
+      !won ? '<div class="soft-land"><b>差 ' + bossLeft + ' 下就打倒了</b>' +
+        '<span class="tiny">去训练场练一组，回来再打一次，心就稳了。</span></div>' : '',
       '<div class="btn-row" style="margin-top:12px">',
-        '<button class="btn primary" data-action="boss-board">回到 boss 列表</button>',
+        !won ? '<button class="btn primary" data-action="training-quick" data-key="' + key +
+               '" data-league="' + league + '">先练 3 题</button>' : '',
+        won && canAgain ? '<button class="btn" data-action="boss-fight" data-key="' + key +
+               '" data-league="' + league + '">再打一次</button>' : '',
+        '<button class="btn primary" data-action="continent">回到大陆</button>',
         '<button class="btn ghost" data-action="close-overlay">先歇会儿</button>',
       '</div>',
     ].join(''));
@@ -589,37 +621,98 @@
       '<span class="tiny">来自 ' + esc(BOSS_NAMES[x.from] || x.from) + ' · ' + esc(dLabel(x.at)) + '</span></div>';
   }
 
-  function openBossBoard() {
+  function openContinent() {
     if (St.isGuest()) { toast('取个昵称才能打 boss 和收战利品'); return; }
     // 顺手把云端礼物库刷新一下，掉到的礼物才是最新的
     refreshGiftPool().then(function (changed) {
-      if (changed && document.querySelector('.overlay')) openBossBoard();
+      if (changed && document.querySelector('.overlay')) openContinent();
     });
-    var list = St.bossList();
-    var cards = list.map(function (b) {
-      var art = BOSS_ART[b.key];
-      return '<button class="boss-card' + (b.beaten ? ' beaten' : '') + '" data-action="boss-fight" data-key="' + b.key + '">' +
-        '<svg class="boss-ico"><use href="#' + art + '"></use></svg>' +
+    var league = ui.league;
+    var info = St.leagueInfo(league), unlocked = St.leagueUnlocked(league);
+    var rk = St.rankInfo();
+    var tabs = St.LEAGUE_KEYS.map(function (k) {
+      var L = St.leagueInfo(k), on = St.leagueUnlocked(k);
+      return '<button class="league-tab' + (k === league ? ' active' : '') + (on ? '' : ' locked') +
+        '" data-action="league-tab" data-league="' + k + '">' + esc(L.name) +
+        '<span class="tiny">' + (on ? St.leagueLeft(k) + ' 张券' : '未解锁') + '</span></button>';
+    }).join('');
+    var cards = St.bossList(league).map(function (b) {
+      var ready = St.trainingReady(b.key);
+      return '<button class="boss-card' + (b.beaten ? ' beaten' : '') + '" data-action="boss-fight" ' +
+        'data-key="' + b.key + '" data-league="' + league + '">' +
+        '<svg class="boss-ico"><use href="#' + BOSS_ART[b.key] + '"></use></svg>' +
         '<strong>' + esc(BOSS_NAMES[b.key] || b.name) + '</strong>' +
-        '<span class="tiny">' + b.tier + ' boss · ' + (b.beaten ? '已征服' :
-          (b.key === 'midterm' ? '第 1–4 单元' : b.key === 'final' ? '全册' :
-           '第 ' + Number(b.key.slice(1)) + ' 单元')) + '</span>' +
+        '<span class="tiny">' + b.tier + ' boss · ' + (b.beaten ? '已征服' : '准备度 ' + ready + '%') + '</span>' +
+        '<span class="boss-ready"><i style="width:' + ready + '%"></i></span>' +
         (b.beaten ? '<span class="boss-flag">✓</span>' : '') +
       '</button>';
     }).join('');
     var loot = (S().loot || []).slice().reverse();
     overlay([
       '<h2>字块大陆 · BOSS 挑战</h2>',
-      '<p class="muted">一个单元一个小 boss，期中是中 boss，期末是大 boss。答对打空它的心，答错自己掉心；打赢开一次礼物。</p>',
+      '<div class="league-head"><span class="rank-badge">', esc(rk.name), '</span>',
+        '<span class="tiny">经验 ', rk.xp, ' · 保底再 ', St.pityLeft(), ' 次必出精良</span></div>',
+      '<div class="league-tabs">', tabs, '</div>',
+      unlocked
+        ? '<p class="muted">' + esc(info.name) + '：今天还剩 <b>' + St.leagueLeft(league) +
+          '</b> 次挑战。题目更活、心数更少；答对攻击，答错掉心。</p>'
+        : '<p class="muted">这一档还没解锁。把 ' + esc(St.leagueInfo(info.unlockAt).name) +
+          ' 的任意 boss 打通关一次就开了。</p>',
       '<div class="boss-grid">', cards, '</div>',
       '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn" data-action="training-board" data-league="' + league + '">训练场 · 不扣券</button>',
         '<button class="btn" data-action="gift-pool">礼物库（', St.giftPool().length, ' 件）</button>',
         '<button class="btn ghost" data-action="close-overlay">收起</button>',
       '</div>',
       '<h3 style="margin-top:16px">我的战利品（', loot.length, '）</h3>',
-      loot.length
-        ? '<div class="loot-list">' + loot.map(lootRow).join('') + '</div>'
-        : '<p class="tiny">还没有战利品。打赢一个 boss 就能开一次箱。</p>',
+      loot.length ? '<div class="loot-list">' + loot.map(lootRow).join('') + '</div>'
+                  : '<p class="tiny">还没有战利品。打赢一个 boss 就能开一次箱。</p>',
+    ].join(''));
+  }
+  function openBossBoard() { openContinent(); }
+
+  // 训练场：挑一只 boss 练一组，不扣券、不掉礼物、不判输赢
+  function openTrainingBoard() {
+    var league = ui.league;
+    var cards = St.bossList(league).map(function (b) {
+      var ready = St.trainingReady(b.key);
+      return '<button class="train-card" data-action="training-start" data-key="' + b.key +
+        '" data-league="' + league + '">' +
+        '<svg class="boss-ico sm"><use href="#' + BOSS_ART[b.key] + '"></use></svg>' +
+        '<b>' + esc(BOSS_NAMES[b.key] || b.name) + '</b>' +
+        '<span class="tiny">准备度 ' + ready + '%</span>' +
+        '<span class="boss-ready"><i style="width:' + ready + '%"></i></span></button>';
+    }).join('');
+    overlay([
+      '<h2>训练场 · ' + esc(St.leagueInfo(league).name) + '</h2>',
+      '<p class="muted">随便练，不扣挑战券、不掉礼物、答错也不打断。练到 90% 再上场，心里有底。</p>',
+      '<div class="train-grid">', cards, '</div>',
+      '<p class="tiny" style="margin-top:10px">训练也涨经验；错题照常进错题本。连续练对 10 题，每天能赢回 1 张普通挑战券。</p>',
+      '<button class="btn ghost wide" style="margin-top:10px" data-action="continent">回大陆</button>',
+    ].join(''));
+  }
+
+  function finishTraining() {
+    var total = round.items.length;
+    var right = round.results.filter(function (r) { return r.correct; }).length;
+    var pct = total ? Math.round(right / total * 100) : 0;
+    var key = round.bossKey, league = round.league || 'normal';
+    var res = St.setTraining(key, pct, total);
+    var name = BOSS_NAMES[key] || 'boss';
+    var tip = pct >= 90 ? '可以去地狱试试了' : pct >= 80 ? '噩梦难度应该没问题'
+            : pct >= 60 ? '再练一轮就稳了' : '先把解析看懂，再来一遍';
+    round = null; St.clearRound(); render();
+    overlay([
+      '<h2>训练完成 · ' + esc(name) + '</h2>',
+      '<p class="muted">做对 ' + right + ' / ' + total + ' 题</p>',
+      '<div class="ready-report"><b>' + pct + '%</b><span>' + esc(tip) + '</span></div>',
+      res.bonus ? '<div class="ticket-win">连对 10 题！普通挑战券 +1</div>' : '',
+      '<p class="tiny" style="margin-top:10px">训练场不掉礼物、不扣券，但错题会进错题本，答对也照常涨经验。</p>',
+      '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn" data-action="training-start" data-key="' + key + '" data-league="' + league + '">再练一组</button>',
+        '<button class="btn primary" data-action="boss-fight" data-key="' + key + '" data-league="' + league + '">去挑战</button>',
+        '<button class="btn ghost" data-action="continent">回大陆</button>',
+      '</div>',
     ].join(''));
   }
 
@@ -702,6 +795,9 @@
       idx: 0, selected: null, phase: 'ask', results: [],
       challenge: !!spec.challenge,
       battle: spec.battle === 'boss' ? 'boss' : '',
+      league: spec.league || '',
+      training: !!spec.training,
+      wrongDmg: Number(spec.wrongDmg) || 1,
       bossKey: spec.bossKey || '',
       bossHp: Number(spec.bossHp) || 0,
       bossHpMax: Number(spec.bossHp) || 0,
@@ -782,40 +878,34 @@
       ].join('');
     }
 
-    var unitSel = window.YW_UNITS.map(function (u) {
-      return '<option value="' + u.id + '"' + (s.digUnit === u.id ? ' selected' : '') +
-             '>第 ' + u.id + ' 单元 · ' + esc(u.name) + '</option>';
-    }).join('');
-    var curUnit = window.YW_UNITS.filter(function (u) { return u.id === s.digUnit; })[0] || window.YW_UNITS[0];
-    var lessonSel = '<option value="0"' + (!s.digLesson ? ' selected' : '') + '>整个单元（不指定课）</option>' +
-      curUnit.lessons.map(function (l) {
-        return '<option value="' + l.n + '"' + (s.digLesson === l.n ? ' selected' : '') +
-               '>第 ' + l.n + ' 课 · ' + esc(l.t) + '</option>';
-      }).join('');
+    var rk = St.rankInfo();
+    var conqAll = 0;
+    St.LEAGUE_KEYS.forEach(function (k) {
+      conqAll += St.bossList(k).filter(function (b) { return b.beaten; }).length;
+    });
 
     view.innerHTML = [
-      '<div class="section-title"><h2>今天的挖掘</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
+      '<div class="section-title"><h2>字块大陆</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
       runCard(s.lastRun),
       todo,
-      '<div class="card">',
-        '<h2>今天挖哪一块</h2>',
-        '<p class="muted">选好单元和具体第几课，这一趟就优先出这部分的题目。</p>',
-        '<label class="field" style="margin-top:10px"><span>单元</span><select id="dig-unit">', unitSel, '</select></label>',
-        '<label class="field"><span>具体第几课</span><select id="dig-lesson">', lessonSel, '</select></label>',
-        '<div class="stat-row">',
-          '<div class="stat-box"><b>', today.attempts, '</b><span>今日题数</span></div>',
-          '<div class="stat-box"><b>', today.correct, '</b><span>一次就对</span></div>',
-          '<div class="stat-box"><b>', today.careless, '</b><span>看错了</span></div>',
+      '<div class="card continent-card">',
+        '<div class="rank-line"><span class="rank-badge">', esc(rk.name), '</span>',
+          '<span class="tiny">经验 ', rk.xp, rk.next ? ' · 再 ' + rk.toNext + ' 升 ' + esc(rk.next.name) : ' · 已满级',
+          '</span></div>',
+        '<div class="rank-track"><i style="width:', rk.pct, '%"></i></div>',
+        '<h2>今天去哪打</h2>',
+        '<p class="muted">普通、噩梦、地狱三档，题目和容错都不一样。训练场随便练，不扣次数。</p>',
+        '<button class="btn primary wide continent-entry" data-action="continent">进入字块大陆',
+          '<span class="badge-done">', conqAll, '/30 已征服</span></button>',
+        '<div class="ticket-row">',
+          St.LEAGUE_KEYS.map(function (k) {
+            var info = St.leagueInfo(k), on = St.leagueUnlocked(k);
+            return '<span class="ticket' + (on ? '' : ' locked') + '">' + esc(info.name) + ' ' +
+              (on ? St.leagueLeft(k) + ' 张' : '未解锁') + '</span>';
+          }).join(''),
         '</div>',
-        '<button class="btn primary wide" data-action="start-daily">开始这一趟（5 题）</button>',
-        '<button class="btn wide challenge-btn" data-action="start-challenge">今日挑战 · 30 秒 5 题',
-          St.hasChallenge() ? '<span class="badge-done">今天已拿到徽章</span>' : '', '</button>',
-        '<button class="btn wide boss-entry" data-action="boss-board">BOSS 挑战 · 打赢掉战利品',
-          (function () { var b = St.bossList(); var n = b.filter(function (x) { return x.beaten; }).length;
-            return '<span class="badge-done">' + n + '/' + b.length + ' 已征服</span>'; })(), '</button>',
-        '<p class="tiny" style="margin-top:8px">挑战只是换个节奏，时间到也能把题做完；徽章只作纪念，不加砖。',
-          St.isGuest() ? '游客模式：这一趟不存进度。' : '做到一半会自动存成待办。', '</p>',
-        '<p class="tiny">同一道题今天只算一块砖，做新题才有新伙伴；「一次就对」只算第一次就答对的。</p>',
+        '<p class="tiny" style="margin-top:8px">今天做过 ', today.attempts, ' 题，一次就对 ', today.correct, ' 题。',
+          St.isGuest() ? '游客模式：进度不存，先取个昵称吧。' : '打到一半会自动存成待办。', '</p>',
       '</div>',
       St.isGuest() ? guestCard() : towerCard(),
       St.isGuest() ? '<p class="tiny" style="text-align:center">想要错题本和回忆录，就取个昵称。</p>'
@@ -1036,13 +1126,15 @@
     var last = { qid: q.id, correct: correct, type: type, selected: sel };
     round.results.push(last);
     round.phase = 'ask';
-    // BOSS 战：答对砍 boss 一格血，答错自己挨一下。只影响血条，不改砖数口径。
+    // 确定性成长：答对多涨、答错也涨一点——哪怕输了也在往前走（暗黑 3 巅峰等级思路）
+    St.gainXp(correct ? 2 * (St.leagueInfo(round.league || 'normal').xpMul) : 1);
+    // BOSS 战：答对砍 boss 一格血，答错按难度扣 1 或 2 颗心。只影响血条，不改砖数口径。
     if (round.battle === 'boss') {
       if (correct) round.bossHp = Math.max(0, (round.bossHp || 0) - 1);
-      else round.myHp = Math.max(0, (round.myHp || 0) - 1);
+      else round.myHp = Math.max(0, (round.myHp || 0) - (round.wrongDmg || 1));
       // 记下刚碎掉的是哪一颗心，下一次渲染播一次碎裂动画
       if (correct) round.brokeBoss = round.bossHp; else round.brokeMe = round.myHp;
-      arenaHit(correct, 1);
+      arenaHit(correct, round.wrongDmg || 1);
       round.phase = 'anim';               // 动画期间锁住输入，防止连点跳过战斗
       var over = round.bossHp <= 0 ? 'win'
         : (round.myHp <= 0 || round.idx + 1 >= round.items.length) ? 'lose' : null;
@@ -1160,6 +1252,8 @@
       if (outcome) { finishBoss(outcome); return; }
     }
     if (round.idx + 1 >= round.items.length) {
+      // 训练场不判输赢，做完直接给准备度报告
+      if (round.training) { finishTraining(); return; }
       // 订正完回错题集，且不覆盖当天真实成绩的那条结果
       if (round.isRedo) tab = 'wrong';
       else {
@@ -1422,14 +1516,14 @@
           else await afterIdentity('已删除该昵称');
         });
         break;
-      case 'start-daily': startRound({ mode: 'daily', count: 5, unit: S().digUnit, lesson: S().digLesson }); break;
-      case 'start-challenge':
-        startRound({ mode: 'daily', count: 5, unit: S().digUnit, lesson: S().digLesson,
-                     challenge: true, label: '今日挑战' });
-        break;
-      case 'boss-board': openBossBoard(); break;
-      case 'boss-fight': startBoss(d.key); break;
+      case 'continent': openContinent(); break;
+      case 'league-tab': ui.league = d.league; openContinent(); break;
+      case 'boss-board': openContinent(); break;
+      case 'boss-fight': startBoss(d.key, d.league || ui.league); break;
       case 'boss-quit': quitBoss(); break;
+      case 'training-board': openTrainingBoard(); break;
+      case 'training-start': startTraining(d.key, d.league || ui.league, 5); break;
+      case 'training-quick': startTraining(d.key, d.league || ui.league, 3); break;
       case 'gift-pool':
         openGiftPool();
         refreshGiftPool().then(function (changed) { if (changed) openGiftPool(); });

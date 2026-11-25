@@ -652,3 +652,44 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .gift-form { margin: 10px 0; padding: 10px; background: var(--card); border: 2px dashed var(--dirt-d); }
 .gift-form select { width: 100%; padding: 9px; font: inherit; background: var(--paper-2);
   border: 2px solid var(--ink); box-shadow: var(--shadow-sm, 2px 2px 0 rgba(0,0,0,.12)); }
+
+/* ================= 字块大陆：三难度联赛 / 训练场 ================= */
+.continent-card { padding: 14px; }
+.rank-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.rank-badge { display: inline-block; padding: 3px 9px; font-size: 12px; font-weight: 700;
+  color: #3f2100; background: var(--amber); border: 2px solid var(--ink);
+  box-shadow: 2px 2px 0 rgba(0,0,0,.14); }
+.rank-track { height: 9px; margin: 8px 0 12px; background: var(--paper-2); border: 2px solid var(--ink); }
+.rank-track i { display: block; height: 100%; background: linear-gradient(90deg, #f5d76e, #e8a93d);
+  transition: width .4s ease-out; }
+.continent-entry { margin-top: 8px; font-weight: 700; }
+.ticket-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 9px; }
+.ticket { padding: 3px 7px; font-size: 11px; background: var(--grass-l); border: 1px solid var(--grass-dd); }
+.ticket.locked { color: var(--ink-3); background: var(--paper-2); border-color: var(--line); }
+
+.league-head { display: flex; align-items: center; gap: 8px; margin: 8px 0 12px; flex-wrap: wrap; }
+.league-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.league-tab { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 7px 4px; font-family: inherit; font-size: 13px; font-weight: 600;
+  background: var(--paper-2); color: var(--ink); border: 2px solid var(--line); cursor: pointer; }
+.league-tab.active { background: var(--amber); border-color: var(--ink); box-shadow: 2px 2px 0 rgba(0,0,0,.14); }
+.league-tab.locked { opacity: .5; }
+.league-tab .tiny { font-size: 10px; }
+.boss-ready { display: block; width: 70px; height: 5px; background: var(--paper-2);
+  border: 1px solid var(--line); overflow: hidden; }
+.boss-ready i { display: block; height: 100%; background: var(--grass); }
+
+.train-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.train-card { display: flex; align-items: center; gap: 8px; padding: 8px; text-align: left;
+  background: var(--card); border: 2px solid var(--line); cursor: pointer; }
+.train-card b { font-size: 13px; flex: 1; }
+.train-card .boss-ico.sm { width: 36px; height: 36px; }
+.train-card .boss-ready { width: 44px; }
+.ready-report { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 12px;
+  padding: 14px; background: var(--grass-l); border: 3px solid var(--grass-dd); }
+.ready-report b { font-size: 30px; color: var(--grass-dd); }
+.ticket-win { margin-top: 10px; padding: 9px; text-align: center; font-weight: 700;
+  color: #3f2100; background: var(--amber); border: 2px solid var(--ink); }
+.soft-land { margin-top: 12px; padding: 11px; display: flex; flex-direction: column; gap: 4px;
+  background: var(--paper-2); border-left: 5px solid var(--amber-d); }
+.soft-land b { font-size: 14px; }
