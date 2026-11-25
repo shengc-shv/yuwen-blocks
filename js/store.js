@@ -70,8 +70,9 @@
       // n = 当天已经出过几道「打字」题（填空），全天最多两道；
       // kinds = 当天出过的输出题类型，用来轮换 spot/fill/order，避免连着几趟同一种。
       fillDay: { d: '', n: 0, kinds: [] },
-      // BOSS 战利品：奖品池由家长在本机填写，战利品只作收藏，不加砖、不进云端快照。
-      prizePool: [], loot: [], bossDone: {},
+      // BOSS 战利品：礼物库在云端（全局共享，只有家长账号能写），这里只缓存一份；
+      // 战利品只作收藏，不加砖、不进云端快照。
+      prizePool: [], loot: [], bossDone: {}, giftPool: [], giftPoolAt: '',
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
       saves: {}, pendingSync: [],
     };
@@ -794,6 +795,82 @@
 
   /* ---------- BOSS 战：奖品池 / 战利品 ---------- */
   var BOSS_KEYS = ['u1', 'u2', 'u3', 'u4', 'u5', 'u6', 'u7', 'u8', 'midterm', 'final'];
+
+  /* ---------- 全局礼物库：四档稀有度 + 权重掉落 ----------
+   * 礼物清单存在云端 gift_pool 表，所有设备共用一份；只有 GIFT_OWNER 这个昵称
+   * 能往里加/删（数据库 RLS 也按 created_by 拦了一层）。
+   * 掉率参考「暗黑」类刷装的思路：小 boss 多白绿，越大的 boss 越容易出橙。
+   */
+  var GIFT_OWNER = '三重刘德华';
+  var GIFT_TIERS = ['white', 'green', 'purple', 'orange'];
+  var GIFT_TIER = {
+    white:  { key: 'white',  label: '普通', color: '#e9e7df', ink: '#33322c', pct: '' },
+    green:  { key: 'green',  label: '精良', color: '#79d96a', ink: '#12330f', pct: '' },
+    purple: { key: 'purple', label: '稀有', color: '#c07bff', ink: '#2b1241', pct: '' },
+    orange: { key: 'orange', label: '传说', color: '#ffa53d', ink: '#3f2100', pct: '' },
+  };
+  // 每个难度档位的掉落权重（合计 100）
+  var GIFT_WEIGHTS = {
+    small: { white: 60, green: 26, purple: 11, orange: 3 },
+    mid:   { white: 40, green: 30, purple: 22, orange: 8 },
+    big:   { white: 24, green: 30, purple: 30, orange: 16 },
+  };
+  function bossTierOf(key) {
+    return key === 'final' ? 'big' : (key === 'midterm' ? 'mid' : 'small');
+  }
+  function giftOwner() { return GIFT_OWNER; }
+  function canManageGifts() { return S.name === GIFT_OWNER; }
+
+  // 云端礼物库的本地缓存：没网也能看能掉，下次联网再刷新
+  function setGiftPool(list) {
+    S.giftPool = (list || []).map(function (g) {
+      return { id: g.id, name: String(g.name || '').slice(0, 24), tier: g.tier, note: g.note || '' };
+    }).filter(function (g) { return g.name && GIFT_TIERS.indexOf(g.tier) >= 0; });
+    S.giftPoolAt = todayKey();
+    persist();
+    return S.giftPool;
+  }
+  function giftPool() { return S.giftPool || []; }
+
+  function rollTier(bossKey, luck) {
+    var w = GIFT_WEIGHTS[bossTierOf(bossKey)] || GIFT_WEIGHTS.small;
+    var total = 0, i;
+    for (i = 0; i < GIFT_TIERS.length; i++) total += w[GIFT_TIERS[i]];
+    var r = Math.random() * total, acc = 0, tier = GIFT_TIERS[0];
+    for (i = 0; i < GIFT_TIERS.length; i++) {
+      acc += w[GIFT_TIERS[i]];
+      if (r < acc) { tier = GIFT_TIERS[i]; break; }
+    }
+    // 满血通关（luck）重掷一次取更好的那档，奖励打得干净的
+    if (luck) {
+      var r2 = Math.random() * total, acc2 = 0, t2 = GIFT_TIERS[0];
+      for (i = 0; i < GIFT_TIERS.length; i++) {
+        acc2 += w[GIFT_TIERS[i]];
+        if (r2 < acc2) { t2 = GIFT_TIERS[i]; break; }
+      }
+      if (GIFT_TIERS.indexOf(t2) > GIFT_TIERS.indexOf(tier)) tier = t2;
+    }
+    return tier;
+  }
+
+  // 先按档位抽，该档空了就往下退一档，全空返回 null（提示家长去塞礼物）
+  function rollGift(bossKey, opts) {
+    var pool = giftPool();
+    if (!pool.length) return null;
+    var luck = !!(opts && opts.perfect);
+    var want = rollTier(bossKey, luck);
+    var from = GIFT_TIERS.indexOf(want);
+    for (var i = from; i >= 0; i--) {
+      var tier = GIFT_TIERS[i];
+      var bucket = pool.filter(function (g) { return g.tier === tier; });
+      if (bucket.length) {
+        var pick = bucket[Math.floor(Math.random() * bucket.length)];
+        return { name: pick.name, tier: tier, id: pick.id };
+      }
+    }
+    return null;
+  }
+
   function addPrize(name) {
     var n = String(name == null ? '' : name).replace(/\s+/g, ' ').trim().slice(0, 16);
     if (!n) return false;
@@ -809,20 +886,20 @@
     if (i >= 0) { S.prizePool.splice(i, 1); persist(); }
   }
   // 首次击败某个 BOSS 才掉落，重复通关不再发战利品（防刷）。
-  function winBoss(key) {
+  // gift：由 rollGift() 掷出的 { name, tier }，为空表示礼物库还空着。
+  function winBoss(key, gift) {
     if (BOSS_KEYS.indexOf(key) < 0) return null;
     S.bossDone = S.bossDone || {};
-    if (S.bossDone[key]) return { repeat: true, prize: null, loot: S.loot || [] };
+    if (S.bossDone[key]) return { repeat: true, gift: null, loot: S.loot || [] };
     S.bossDone[key] = todayKey();
-    var pool = S.prizePool || [];
     S.loot = S.loot || [];
-    var prize = null;
-    if (pool.length) {
-      prize = pool[Math.floor(Math.random() * pool.length)];
-      S.loot.push({ prize: prize, from: key, at: todayKey() });
+    var got = null;
+    if (gift && gift.name) {
+      got = { name: gift.name, tier: gift.tier || 'white', from: key, at: todayKey() };
+      S.loot.push(got);
     }
     persist();
-    return { repeat: false, prize: prize, loot: S.loot, noPrize: !pool.length };
+    return { repeat: false, gift: got, loot: S.loot, noGift: !got };
   }
   function bossBeaten(key) { return !!(S.bossDone || {})[key]; }
   function bossList() {
@@ -917,6 +994,10 @@
     setExamScope: function (key, units) { S.examScope[key] = units; return persist(); },
     addPrize: addPrize, removePrize: removePrize, winBoss: winBoss,
     bossBeaten: bossBeaten, bossList: bossList, bossSpec: bossSpec,
+    // 全局礼物库：四档稀有度、权重掉落、只有 owner 昵称能管理
+    GIFT_TIERS: GIFT_TIERS, GIFT_TIER: GIFT_TIER, GIFT_WEIGHTS: GIFT_WEIGHTS,
+    giftPool: giftPool, setGiftPool: setGiftPool, rollGift: rollGift, rollTier: rollTier,
+    giftOwner: giftOwner, canManageGifts: canManageGifts, bossTierOf: bossTierOf,
     pastCount: function () { return window.YW_pastQuestions(S.grade).length; },
     setNoAnim: function (v) { S.noAnim = !!v; document.documentElement.classList.toggle('no-anim', !!v); return persist(); },
   };

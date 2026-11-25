@@ -421,16 +421,25 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 /* 答题往下滚时竞技场吸在顶部，交战画面始终可见 */
 .arena { position: sticky; top: 0; z-index: 20; margin: -14px -14px 10px; border-left: 0; border-right: 0;
   border-top: 0; border-bottom: 3px solid var(--dirt-d); background: #cfd8e8; }
-.arena-top { display: flex; align-items: center; gap: 10px; padding: 7px 9px; background: var(--paper-2); border-bottom: 2px solid var(--dirt-d); }
+.arena-top { display: flex; align-items: center; gap: 8px; padding: 6px 9px; background: var(--paper-2); border-bottom: 2px solid var(--dirt-d); }
 .hp-side { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; font-size: 12px; }
 .hp-side.boss-side { justify-content: flex-end; }
-.hp-side > span { flex: none; font-weight: 500; }
+.hp-who { flex: none; font-weight: 700; color: var(--ink-2); }
 .boss-tag { white-space: nowrap; font-weight: 700; }
-.hp-side > b { flex: none; font-size: 11px; }
-.hp-track { flex: 1; min-width: 48px; height: 11px; background: var(--card); border: 2px solid var(--ink); }
-.hp-track i { display: block; height: 100%; transition: width .35s ease-out; }
-.hp-boss { background: var(--red); }
-.hp-me { background: var(--grass); }
+/* 红心血条：像素心，满心红、空心暗；刚被打掉的那颗碎一下 */
+.hearts { display: flex; align-items: center; gap: 1px; flex: none; }
+.hearts .heart { width: 16px; height: 15px; flex: none; image-rendering: pixelated;
+  filter: drop-shadow(1px 1px 0 rgba(0,0,0,.22)); }
+.hearts-boss .heart { width: 13px; height: 12px; }
+.hearts-me .heart { color: #e8453c; }
+.hearts-boss .heart { color: #e04b4b; }
+.hearts .heart.lost { color: #3b2b26; opacity: .38; filter: none; }
+.hearts .heart.broke { animation: heartBreak .6s ease-out; }
+@keyframes heartBreak {
+  0% { transform: scale(1); }
+  32% { transform: scale(1.55) rotate(-8deg); filter: brightness(2.4); }
+  100% { transform: scale(1); }
+}
 /* 地面：整只像素精灵站在地面上，32×32 素材按 2 倍整数放大到 64px，手机上也锐利 */
 .arena-floor { position: relative; height: 130px; overflow: hidden;
   background: linear-gradient(#b9cbe0 0 92%, #a6bbd2 92% 100%); }
@@ -463,7 +472,31 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .arena.hit-enemy .slash { animation: slashFlash .7s ease-out; }
 .arena.hit-enemy .dmg { animation: dmgPop .7s ease-out; }
 /* 答错：BOSS 反击冲锋、己方受击抖动 */
-.arena.hit-hero .fighter.enemy { animation: enemyDash .7s ease-out; }
+.arena.hit-hero[data-atk="charge"] .fighter.enemy { animation: enemyDash .7s ease-out; }
+.arena.hit-hero[data-atk="jump"] .fighter.enemy { animation: enemyJump .7s ease-out; }
+.arena.hit-hero[data-atk="boom"] .fighter.enemy { animation: enemyPuff .7s ease-out; }
+.arena.hit-hero[data-atk="breath"] .fighter.enemy { animation: enemyRear .7s ease-out; }
+.arena.hit-hero[data-atk="laser"] .fighter.enemy,
+.arena.hit-hero[data-atk="fire"] .fighter.enemy { animation: enemyRecoil .7s ease-out; }
+@keyframes enemyJump {
+  0%, 100% { transform: scaleX(-1) translateY(0); }
+  22% { transform: scaleX(-1) translateY(-34px); }
+  42% { transform: scaleX(-1) translateY(-38px); }
+  58% { transform: scaleX(-1) translateY(0); }
+}
+@keyframes enemyPuff {
+  0%, 28% { transform: scaleX(-1) scale(1); }
+  46% { transform: scaleX(-1) scale(1.13); filter: brightness(2.1); }
+  100% { transform: scaleX(-1) scale(1); }
+}
+@keyframes enemyRear {
+  0%, 100% { transform: scaleX(-1) translateX(0); }
+  40% { transform: scaleX(-1) translateX(12px) scale(1.05); }
+}
+@keyframes enemyRecoil {
+  0%, 100% { transform: scaleX(-1) translateX(0); }
+  35% { transform: scaleX(-1) translateX(8px); }
+}
 .arena.hit-hero .fighter.hero { animation: heroHurt .7s ease-out; }
 .arena.hit-hero .slash { animation: slashFlash .7s ease-out; }
 .arena.hit-hero .dmg { animation: dmgPop .7s ease-out; }
@@ -479,3 +512,143 @@ body.is-guest .sync-bar { color: var(--amber-d); }
   100% { opacity: 0; transform: translateY(-24px); } }
 .no-anim .arena *, .no-anim .fighter { animation: none !important; }
 @media (max-width: 420px) { .boss-grid { grid-template-columns: 1fr 1fr; } }
+
+/* ================= 各 boss 的专属攻击特效 =================
+   都是绝对定位的装饰层，不占布局、不影响任何计分逻辑。
+   造型语言统一：由右向左打过来，落点在左侧小勇者身上。 */
+.fx { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+.fx i { position: absolute; display: block; opacity: 0; }
+
+/* 墨影龙：紫色吐息横扫 */
+.fx .fx-breath { right: 66px; top: 44px; width: 10px; height: 18px; border-radius: 50% 0 0 50%;
+  background: linear-gradient(90deg, #f0b6ff, #a24dff 55%, rgba(122,47,214,0));
+  box-shadow: 0 0 14px rgba(180,92,255,.9); }
+.fx .fx-breath.b2 { top: 58px; height: 11px; transform: rotate(-6deg);
+  background: linear-gradient(90deg, #ffd6ff, #cf7bff 60%, rgba(162,77,255,0)); }
+.fx.go .fx-breath { animation: breathOut .72s ease-out forwards; }
+.fx.go .fx-breath.b2 { animation-delay: .07s; }
+@keyframes breathOut {
+  0% { width: 8px; opacity: 0; }
+  22% { opacity: .95; }
+  72% { width: 210px; opacity: .85; }
+  100% { width: 250px; opacity: 0; }
+}
+
+/* 爆爆苔：贴身自爆 */
+.fx .fx-boom { left: 18px; top: 46px; width: 62px; height: 62px; border-radius: 50%;
+  border: 4px solid #ffe38a;
+  background: radial-gradient(circle, rgba(255,214,102,.72), rgba(255,140,40,0) 58%); }
+.fx .fx-boom.b2 { border-color: #ff9a2e; }
+.fx.go .fx-boom { animation: boomOut .62s ease-out forwards; }
+.fx.go .fx-boom.b2 { animation-delay: .1s; }
+@keyframes boomOut {
+  0% { transform: scale(.2); opacity: 1; }
+  70% { opacity: .8; }
+  100% { transform: scale(1.5); opacity: 0; }
+}
+
+/* 骨弓手：射箭 */
+.fx .fx-arrow { right: 62px; top: 62px; width: 26px; height: 4px;
+  background: linear-gradient(90deg, #f2e6c8, #a8804a); }
+.fx .fx-arrow:after { content: ''; position: absolute; right: -7px; top: -4px;
+  border: 6px solid transparent; border-right-color: #e8e2d0; }
+.fx.go .fx-arrow { animation: arrowFly .5s linear forwards; }
+@keyframes arrowFly {
+  0% { right: 96px; opacity: 1; }
+  85% { opacity: 1; }
+  100% { right: 250px; opacity: 0; }
+}
+
+/* 八足蛛：吐丝 */
+.fx .fx-web { left: 4px; top: 30px; width: 96px; height: 84px;
+  background:
+    repeating-linear-gradient(45deg, transparent 0 11px, rgba(255,255,255,.9) 11px 13px),
+    repeating-linear-gradient(-45deg, transparent 0 11px, rgba(255,255,255,.9) 11px 13px); }
+.fx.go .fx-web { animation: webOut .6s ease-out forwards; }
+@keyframes webOut {
+  0% { transform: scale(.25); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+/* 糖霜巨：扔雪球 */
+.fx .fx-snow { right: 66px; top: 42px; width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 0 10px #cfe6ff; }
+.fx.go .fx-snow { animation: ballFly .55s ease-in forwards; }
+@keyframes ballFly {
+  0% { right: 96px; top: 38px; opacity: 1; }
+  100% { right: 240px; top: 66px; opacity: 0; }
+}
+
+/* 绿胶怪：跳起来砸地 */
+.fx .fx-slam { left: 26px; bottom: 4px; width: 78px; height: 18px; border-radius: 50%;
+  background: radial-gradient(ellipse at center, rgba(255,255,255,.95), rgba(255,255,255,0) 72%); }
+.fx.go .fx-slam { animation: slamOut .55s ease-out forwards; }
+@keyframes slamOut {
+  0% { transform: scale(.3); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+/* 尖刺眼：光束 */
+.fx .fx-laser { right: 62px; top: 62px; height: 6px; width: 10px;
+  background: #9ff4ff; box-shadow: 0 0 12px #4fd0ff, 0 0 4px #fff; }
+.fx.go .fx-laser { animation: laserOut .45s linear forwards; }
+@keyframes laserOut {
+  0% { width: 12px; opacity: 0; }
+  18% { opacity: 1; }
+  72% { width: 240px; opacity: 1; }
+  100% { width: 250px; opacity: 0; }
+}
+
+/* 焰灵：火球 */
+.fx .fx-fire { right: 68px; top: 46px; width: 16px; height: 16px; border-radius: 50%;
+  background: radial-gradient(circle at 40% 38%, #fff3b0, #ff9a2e 55%, #e0561a);
+  box-shadow: 0 0 14px #ff8a2e; }
+.fx.go .fx-fire { animation: fireFly .58s ease-in forwards; }
+@keyframes fireFly {
+  0% { right: 92px; opacity: 1; transform: scale(.8); }
+  100% { right: 232px; opacity: 0; transform: scale(1.35); }
+}
+
+/* 墨影将：挥刀劈砍 */
+.fx .fx-slash { left: 34px; top: 26px; width: 8px; height: 74px; background: #fff;
+  box-shadow: 0 0 10px #fff; transform-origin: 50% 90%; }
+.fx.go .fx-slash { animation: slashArc .42s ease-out forwards; }
+@keyframes slashArc {
+  0% { transform: rotate(-22deg) scaleY(.2); opacity: 0; }
+  35% { transform: rotate(16deg) scaleY(1); opacity: 1; }
+  100% { transform: rotate(42deg) scaleY(1); opacity: 0; }
+}
+
+/* ================= 礼物稀有度配色 ================= */
+.tier-white { --tier: #dcd9cd; --tier-ink: #33322c; }
+.tier-green { --tier: #79d96a; --tier-ink: #10300d; }
+.tier-purple { --tier: #c07bff; --tier-ink: #2b1241; }
+.tier-orange { --tier: #ffa53d; --tier-ink: #3f2100; }
+.loot-row .tier-dot { width: 10px; height: 10px; flex: none; background: var(--tier, #ccc);
+  border: 2px solid var(--ink); transform: rotate(45deg); margin: 0 3px; }
+.loot-row .tier-label { flex: none; font-size: 11px; padding: 1px 6px; font-weight: 700;
+  color: var(--tier-ink, #222); background: var(--tier, #ccc); border: 1px solid rgba(0,0,0,.35); }
+.loot-row > b { flex: 1; min-width: 0; }
+.loot-win { margin-top: 12px; padding: 12px; text-align: center;
+  background: var(--tier, var(--amber)); color: var(--tier-ink, var(--ink));
+  border: 3px solid var(--ink); box-shadow: var(--shadow); animation: tierPop .45s ease-out; }
+.loot-win .loot-tier { display: block; font-size: 12px; font-weight: 700; letter-spacing: .04em; }
+.loot-win b { display: block; margin-top: 4px; font-size: 21px; }
+.loot-win.tier-orange { box-shadow: 0 0 0 3px rgba(255,165,61,.45), var(--shadow); }
+.tier-head { margin-top: 14px; font-size: 14px; padding-left: 8px; border-left: 6px solid var(--tier, #ccc); }
+@keyframes tierPop {
+  0% { transform: scale(.9); opacity: 0; }
+  60% { transform: scale(1.03); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+/* 礼物库表单与掉率表 */
+.rate-box { margin: 10px 0; padding: 8px 10px; background: var(--paper-2); border: 2px solid var(--dirt-d); }
+.rate-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 11px; }
+.rate-row > span { flex: none; width: 50px; color: var(--ink-2); }
+.rate-row b { flex: 1; text-align: center; padding: 3px 0; font-weight: 700;
+  color: var(--tier-ink); background: var(--tier); border: 1px solid rgba(0,0,0,.3); }
+.gift-form { margin: 10px 0; padding: 10px; background: var(--card); border: 2px dashed var(--dirt-d); }
+.gift-form select { width: 100%; padding: 9px; font: inherit; background: var(--paper-2);
+  border: 2px solid var(--ink); box-shadow: var(--shadow-sm, 2px 2px 0 rgba(0,0,0,.12)); }

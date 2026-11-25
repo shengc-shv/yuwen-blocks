@@ -72,6 +72,41 @@
     return res.data;
   }
 
+  /* ---------- 全局礼物库（所有设备共用一份，只有家长账号能写） ----------
+   * 表 gift_pool 的 RLS 规定：SELECT 所有人可读，INSERT/UPDATE/DELETE 仅允许
+   * created_by = '三重刘德华' 的行。因此「谁能塞礼物」是数据库层拦的，不只是界面隐藏。
+   */
+  async function listGifts() {
+    if (!ready) throw new Error(reason);
+    var res = await cloud.database.from('gift_pool')
+      .select('id, name, tier, note, created_by, created_at')
+      .eq('active', true)
+      .order('created_at', { ascending: false })
+      .limit(300);
+    if (res.error) throw new Error(explain(res.error));
+    return res.data || [];
+  }
+
+  async function addGift(gift) {
+    if (!ready) throw new Error(reason);
+    var res = await cloud.database.from('gift_pool')
+      .insert({ name: gift.name, tier: gift.tier, note: gift.note || '', created_by: gift.createdBy })
+      .select();
+    if (res.error) {
+      if (res.error.code === '23505') throw new Error('这个名字已经放进礼物库了');
+      if (res.error.code === '42501') throw new Error('只有礼物管理员能往库里放礼物');
+      throw new Error(explain(res.error));
+    }
+    return (res.data || [])[0];
+  }
+
+  async function removeGift(id) {
+    if (!ready) throw new Error(reason);
+    var res = await cloud.database.from('gift_pool').delete().eq('id', id);
+    if (res.error) throw new Error(explain(res.error));
+    return true;
+  }
+
   // 换设备已改为「输同一个昵称」自动接档，不再需要遍历云端所有存档。
   // 这里只保留按 space_id 精确查询，避免把整张表读下来。
 
@@ -82,5 +117,8 @@
     uploadSave: uploadSave,
     listSaves: listSaves,
     getSave: getSave,
+    listGifts: listGifts,
+    addGift: addGift,
+    removeGift: removeGift,
   };
 })();

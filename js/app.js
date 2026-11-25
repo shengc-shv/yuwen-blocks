@@ -65,12 +65,45 @@
   }
   // 像素竞技场：答对己方冲锋、答错 BOSS 反击。纯 CSS 动画，
   // 只在画面层加 class，不碰血量、计分和错题逻辑；动画结束自动清掉。
+  // 每种攻击一个特效层：都不占布局，只是绝对定位的 .fx 子元素 + CSS 动画
+  var ATTACK_FX = {
+    boom:  '<i class="fx-boom"></i><i class="fx-boom b2"></i>',
+    arrow: '<i class="fx-arrow"></i>',
+    web:   '<i class="fx-web"></i>',
+    snow:  '<i class="fx-snow"></i>',
+    jump:  '<i class="fx-slam"></i>',
+    laser: '<i class="fx-laser"></i>',
+    fire:  '<i class="fx-fire"></i>',
+    charge: '',
+    slash: '<i class="fx-slash"></i>',
+    breath: '<i class="fx-breath"></i><i class="fx-breath b2"></i>',
+  };
+
+  function playAttack(type) {
+    var arena = document.getElementById('arena');
+    var fx = document.getElementById('fx');
+    if (!arena || !fx) return;
+    arena.setAttribute('data-atk', type);
+    fx.innerHTML = ATTACK_FX[type] || '';
+    void fx.offsetWidth;                       // 强制重排，动画能重放
+    fx.classList.add('go');
+    setTimeout(function () {
+      if (!fx.isConnected) return;
+      fx.innerHTML = '';
+      fx.classList.remove('go');
+      var a = document.getElementById('arena');
+      if (a) a.removeAttribute('data-atk');
+    }, 760);
+  }
+
   function arenaHit(correct, damage) {
     var arena = document.getElementById('arena');
     if (!arena) return;             // 可能已经打完结算了
     arena.classList.remove('hit-hero', 'hit-enemy');
     void arena.offsetWidth;
     arena.classList.add(correct ? 'hit-enemy' : 'hit-hero');
+    // 被打时按 boss 的设定放对应攻击（龙吐息、骷髅射箭、蜘蛛吐丝、苔怪自爆……）
+    playAttack(correct ? 'hero' : (BOSS_ATTACK[round && round.bossKey] || 'charge'));
     var dmg = document.getElementById('dmg');
     if (dmg) { dmg.textContent = '-' + damage; }
     setTimeout(function () {
@@ -78,6 +111,36 @@
       if (dmg) dmg.textContent = '';
     }, 720);
   }
+
+  // 红心血条：cur 满心数 / max 总心数；brokeIdx 是刚被打掉的那颗（播一次碎裂动画）
+  function heartsRow(cur, max, who, brokeIdx) {
+    var out = ['<span class="hearts hearts-', who, '" role="img" aria-label="生命 ',
+      cur, '/', max, '">'];
+    for (var i = 0; i < max; i++) {
+      out.push('<svg class="heart', (i >= cur ? ' lost' : ''), (i === brokeIdx ? ' broke' : ''),
+        '" viewBox="0 0 9 8" aria-hidden="true"><use href="#mc-heart"></use></svg>');
+    }
+    out.push('</span>');
+    return out.join('');
+  }
+
+  // 战斗提示：写清这个 boss 怎么打人，别让小朋友莫名其妙掉心
+  var ATTACK_HINT = {
+    boom: '它贴身就炸，答错会被炸一下',
+    arrow: '它会拉弓射箭，答错就中一箭',
+    web: '它会吐丝缠人，答错就被糊住',
+    snow: '它扔雪球，答错就挨一颗',
+    jump: '它会跳起来砸，答错就被压一下',
+    laser: '它会放光束，答错就被扫到',
+    fire: '它扔火球，答错会烫一下',
+    charge: '它会低头冲撞，答错就被顶飞',
+    slash: '它会挥刀劈砍，答错就中一刀',
+    breath: '它会喷紫色吐息，答错就被烧到',
+  };
+  function attackHint(key) {
+    return ATTACK_HINT[BOSS_ATTACK[key] || 'charge'] || '答对就打它，答错就挨一下';
+  }
+
   function dLabel(k) { return k ? k.slice(5, 7) + '月' + k.slice(8, 10) + '日' : '—'; }
   function kpName(k) { return (window.YW_KP[k] || { label: k }).label; }
   function dimName(d) { return (window.YW_DIMS[d] || { label: '综合' }).label; }
@@ -296,6 +359,8 @@
       updateSyncBar();
       if (St.isFallback()) toast('浏览器存储受限，建议换个浏览器打开');
       render();
+      // 礼物库顺手拉一次（失败不打扰：本地有上次的缓存，照样能开箱）
+      refreshGiftPool();
     } catch (e) {
       view.innerHTML = '<div class="error">启动失败：' + esc(e.message) + '</div>';
     }
@@ -410,9 +475,9 @@
       '</div>',
       '<p class="tiny" style="margin-top:8px">本地始终先存一份；同步失败会标「待同步」，下次打开自动重试，不会静默丢数据。</p>',
 
-      '<h3 style="margin-top:16px">奖品池</h3>',
-      '<p class="tiny">打赢 boss 会掉落这里填的奖品；每人首次击败才掉一次，只存本机。</p>',
-      '<button class="btn wide" data-action="prize-pool">设置奖品池（', (s.prizePool || []).length, ' 项）· 战利品 ',
+      '<h3 style="margin-top:16px">礼物库</h3>',
+      '<p class="tiny">礼物存在云端，所有设备共用一份；只有「', esc(St.giftOwner()), '」这个昵称能往里放礼物。</p>',
+      '<button class="btn wide" data-action="gift-pool">打开礼物库（共 ', St.giftPool().length, ' 件）· 战利品 ',
         (s.loot || []).length, ' 件</button>',
 
       '<h3 style="margin-top:16px">设置</h3>',
@@ -436,8 +501,11 @@
   }
 
   /* ---------------- BOSS 战 ---------------- */
-  var BOSS_NAMES = { u1: '苔刺球', u2: '沙岩怪', u3: '影叶狐', u4: '糖霜巨', u5: '露珠怪',
-                     u6: '海岩龘', u7: '风铃兽', u8: '铁甲犀', midterm: '墨影将', final: '墨影龙' };
+  var BOSS_NAMES = { u1: '爆爆苔', u2: '骨弓手', u3: '八足蛛', u4: '糖霜巨', u5: '绿胶怪',
+                     u6: '尖刺眼', u7: '焰灵', u8: '铁甲猪', midterm: '墨影将', final: '墨影龙' };
+  // 每个 boss 的攻击方式都贴合它的造型设定：吐息/射箭/吐丝/扔雪球/跳砸/激光/火球/冲撞/劈砍/自爆
+  var BOSS_ATTACK = { u1: 'boom', u2: 'arrow', u3: 'web', u4: 'snow', u5: 'jump',
+                      u6: 'laser', u7: 'fire', u8: 'charge', midterm: 'slash', final: 'breath' };
   // 每个 BOSS 一个整只的自绘全身像素形象（见 index.html 的 boss-* symbol）
   var BOSS_ART = { u1: 'boss-u1', u2: 'boss-u2', u3: 'boss-u3', u4: 'boss-u4',
                    u5: 'boss-u5', u6: 'boss-u6', u7: 'boss-u7', u8: 'boss-u8',
@@ -467,23 +535,43 @@
       });
   }
 
+  // 从云端拉一次全局礼物库；返回是否发生了变化（用来决定要不要重绘面板）
+  function refreshGiftPool() {
+    if (!window.YWCloud || !window.YWCloud.isReady()) return Promise.resolve(false);
+    var before = JSON.stringify(St.giftPool());
+    return window.YWCloud.listGifts().then(function (rows) {
+      St.setGiftPool(rows);
+      return before !== JSON.stringify(St.giftPool());
+    }).catch(function () { return false; });
+  }
+
   function finishBoss(outcome) {
     var won = outcome === 'win';
     var key = round.bossKey;
     var name = BOSS_NAMES[key] || key;
-    var result = won ? St.winBoss(key) : null;
+    var myHp = round.myHp, myHpMax = round.myHpMax;
     var hits = round.results.filter(function (r) { return r.correct; }).length;
+    // 满血通关 = 掉两次取更好的那档（暗黑式「运气」，奖励答得干净）
+    var perfect = won && myHp === myHpMax;
+    var gift = won ? St.rollGift(key, { perfect: perfect }) : null;
+    var result = won ? St.winBoss(key, gift) : null;
     round = null; St.clearRound();
     render();
+    var gt = result && result.gift ? (St.GIFT_TIER[result.gift.tier] || St.GIFT_TIER.white) : null;
     overlay([
       '<h2>', won ? '打赢了 ' + esc(name) + '！' : '被 ' + esc(name) + ' 打退了', '</h2>',
-      '<p class="muted">答对 ', hits, ' 次 · ', won ? 'boss 血条清空' : '这次没打过，下次再来', '</p>',
+      '<p class="muted">答对 ', hits, ' 次 · 剩 ', won ? (myHp + ' / ' + myHpMax + ' 颗心') : '0 颗心',
+        ' · ', won ? 'boss 的心全打空了' : '这次没打过，下次再来', '</p>',
       won && result && result.repeat
         ? '<p class="tiny">这个 boss 已经打过啦，战利品只能领一次；再来是练手。</p>' : '',
-      won && result && result.noPrize
-        ? '<p class="tiny">还没设置奖品池，去「我的 → 奖品池」填上奖品，下次打赢就能掉落。</p>' : '',
-      won && result && result.prize
-        ? '<div class="loot-win"><span>掉落战利品</span><b>' + esc(result.prize) + '</b></div>' : '',
+      won && result && result.noGift && !result.repeat
+        ? '<p class="tiny">礼物库还空着，让「' + esc(St.giftOwner()) + '」去「我的 → 礼物库」放几件礼物，下次打赢就能开箱。</p>' : '',
+      gt
+        ? '<div class="loot-win tier-' + result.gift.tier + '">' +
+            '<span class="loot-tier">' + gt.label + '礼物</span>' +
+            '<b>' + esc(result.gift.name) + '</b>' +
+            (perfect ? '<span class="tiny">满血通关，多掷了一次</span>' : '') +
+          '</div>' : '',
       '<div class="btn-row" style="margin-top:12px">',
         '<button class="btn primary" data-action="boss-board">回到 boss 列表</button>',
         '<button class="btn ghost" data-action="close-overlay">先歇会儿</button>',
@@ -491,8 +579,22 @@
     ].join(''));
   }
 
+  function lootRow(x) {
+    var tier = x.tier || 'white';
+    var meta = St.GIFT_TIER[tier] || St.GIFT_TIER.white;
+    return '<div class="loot-row tier-' + tier + '">' +
+      '<span class="tier-dot"></span>' +
+      '<b>' + esc(x.name || x.prize || '礼物') + '</b>' +
+      '<span class="tier-label">' + meta.label + '</span>' +
+      '<span class="tiny">来自 ' + esc(BOSS_NAMES[x.from] || x.from) + ' · ' + esc(dLabel(x.at)) + '</span></div>';
+  }
+
   function openBossBoard() {
     if (St.isGuest()) { toast('取个昵称才能打 boss 和收战利品'); return; }
+    // 顺手把云端礼物库刷新一下，掉到的礼物才是最新的
+    refreshGiftPool().then(function (changed) {
+      if (changed && document.querySelector('.overlay')) openBossBoard();
+    });
     var list = St.bossList();
     var cards = list.map(function (b) {
       var art = BOSS_ART[b.key];
@@ -508,37 +610,73 @@
     var loot = (S().loot || []).slice().reverse();
     overlay([
       '<h2>字块大陆 · BOSS 挑战</h2>',
-      '<p class="muted">一个单元一个小 boss，期中是中 boss，期末是大 boss。答对攻击、答错挨打，打赢收战利品。</p>',
+      '<p class="muted">一个单元一个小 boss，期中是中 boss，期末是大 boss。答对打空它的心，答错自己掉心；打赢开一次礼物。</p>',
       '<div class="boss-grid">', cards, '</div>',
+      '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn" data-action="gift-pool">礼物库（', St.giftPool().length, ' 件）</button>',
+        '<button class="btn ghost" data-action="close-overlay">收起</button>',
+      '</div>',
       '<h3 style="margin-top:16px">我的战利品（', loot.length, '）</h3>',
       loot.length
-        ? '<div class="loot-list">' + loot.map(function (x) {
-            return '<div class="loot-row"><b>' + esc(x.prize) + '</b><span class="tiny">来自 ' +
-              esc(BOSS_NAMES[x.from] || x.from) + ' · ' + esc(dLabel(x.at)) + '</span></div>';
-          }).join('') + '</div>'
-        : '<p class="tiny">还没有战利品。先在「我的 → 奖品池」填上奖品，再去打 boss。</p>',
-      '<button class="btn ghost wide" style="margin-top:12px" data-action="close-overlay">收起</button>',
+        ? '<div class="loot-list">' + loot.map(lootRow).join('') + '</div>'
+        : '<p class="tiny">还没有战利品。打赢一个 boss 就能开一次箱。</p>',
     ].join(''));
   }
 
-  function openPrizePool() {
-    if (St.isGuest()) { toast('取个昵称才能设置奖品池'); return; }
-    var s = S();
-    var pool = s.prizePool || [];
+  // 全局礼物库：所有人都能看，只有 owner 昵称能加/删（云端 RLS 也按 created_by 拦）
+  function openGiftPool(notice) {
+    if (St.isGuest()) { toast('取个昵称才能看礼物库'); return; }
+    var mine = St.canManageGifts();
+    var pool = St.giftPool();
+    var groups = {};
+    St.GIFT_TIERS.forEach(function (t) { groups[t] = []; });
+    pool.forEach(function (g) { (groups[g.tier] || groups.white).push(g); });
+
+    var rateRows = [['small', '小 boss'], ['mid', '中 boss'], ['big', '大 boss']].map(function (p) {
+      var w = St.GIFT_WEIGHTS[p[0]];
+      return '<div class="rate-row"><span>' + p[1] + '</span>' + St.GIFT_TIERS.map(function (t) {
+        return '<b class="tier-' + t + '">' + St.GIFT_TIER[t].label + ' ' + w[t] + '%</b>';
+      }).join('') + '</div>';
+    }).join('');
+
+    var tierBlocks = St.GIFT_TIERS.map(function (t) {
+      var meta = St.GIFT_TIER[t];
+      var items = groups[t];
+      return [
+        '<h3 class="tier-head tier-' + t + '">' + meta.label + '（' + items.length + '）</h3>',
+        items.length ? items.map(function (g) {
+          return '<div class="loot-row tier-' + t + '"><span class="tier-dot"></span><b>' + esc(g.name) + '</b>' +
+            (mine ? '<button class="btn sm ghost" data-action="gift-del" data-id="' + g.id + '">删除</button>' : '') +
+            '</div>';
+        }).join('') : '<p class="tiny">这一档还空着。</p>',
+      ].join('');
+    }).join('');
+
     overlay([
-      '<h2>奖品池</h2>',
-      '<p class="muted">填入你想作为奖励的奖品名称，打赢 boss 时会从池子里随机掉一个。只在这台设备上保存。</p>',
-      '<label class="field"><span>奖品名称（最多 16 个字）</span>' +
-        '<input id="prize-name" maxlength="16" placeholder="例如：贴纸一张" /></label>',
-      '<div class="btn-row"><button class="btn primary" data-action="prize-add">加入奖品池</button></div>',
-      '<h3 style="margin-top:14px">已设置（', pool.length, '）</h3>',
-      pool.length
-        ? '<div class="loot-list">' + pool.map(function (p) {
-            return '<div class="loot-row"><b>' + esc(p) + '</b>' +
-              '<button class="btn sm ghost" data-action="prize-remove" data-name="' + esc(p) + '">删除</button></div>';
-          }).join('') + '</div>'
-        : '<p class="tiny">奖品池还是空的。</p>',
-      '<button class="btn ghost wide" style="margin-top:12px" data-action="close-overlay">收起</button>',
+      '<h2>礼物库</h2>',
+      '<p class="muted">礼物放在云端，所有设备都能掉同一批。共 ', pool.length, ' 件。</p>',
+      notice ? '<p class="tiny" style="color:var(--red)">' + esc(notice) + '</p>' : '',
+      '<div class="rate-box"><p class="tiny">掉落概率（暗黑式：越大的 boss 越容易出高阶礼物）</p>', rateRows, '</div>',
+      mine
+        ? [
+            '<div class="gift-form">',
+              '<label class="field"><span>礼物名字（最多 16 字）</span>' +
+                '<input id="gift-name" maxlength="16" placeholder="例如：周末多玩半小时" /></label>',
+              '<label class="field"><span>档次</span><select id="gift-tier">',
+                St.GIFT_TIERS.map(function (t) {
+                  return '<option value="' + t + '">' + St.GIFT_TIER[t].label + '</option>';
+                }).join(''),
+              '</select></label>',
+              '<button class="btn primary wide" data-action="gift-add">放进礼物库</button>',
+            '</div>',
+            '<p class="tiny">只有「' + esc(St.giftOwner()) + '」这个昵称能往库里放礼物。</p>',
+          ].join('')
+        : '<p class="tiny">礼物库由「' + esc(St.giftOwner()) + '」管理，你负责打 boss 开箱。</p>',
+      tierBlocks,
+      '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn ghost" data-action="gift-refresh">刷新</button>',
+        '<button class="btn ghost" data-action="close-overlay">收起</button>',
+      '</div>',
     ].join(''));
   }
 
@@ -760,15 +898,16 @@
         '</div>',
       ].join('');
     }
+    // 刚被打掉的心：只在这一次渲染里标一下，播完碎裂动画就清掉
+    var brokeMe = round.brokeMe; round.brokeMe = null;
+    var brokeBoss = round.brokeBoss; round.brokeBoss = null;
     var bossHtml = round.battle === 'boss' ? [
       '<div class="arena" id="arena">',
         '<div class="arena-top">',
-          '<div class="hp-side"><span>我</span><div class="hp-track"><i class="hp-me" style="width:',
-            Math.round((round.myHp || 0) / (round.myHpMax || 1) * 100), '%"></i></div><b>',
-            round.myHp, '/', round.myHpMax, '</b></div>',
-          '<div class="hp-side boss-side"><b>', round.bossHp, '/', round.bossHpMax, '</b>',
-            '<div class="hp-track"><i class="hp-boss" style="width:',
-            Math.round((round.bossHp || 0) / (round.bossHpMax || 1) * 100), '%"></i></div>',
+          '<div class="hp-side"><span class="hp-who">我</span>',
+            heartsRow(round.myHp || 0, round.myHpMax || 1, 'me', brokeMe), '</div>',
+          '<div class="hp-side boss-side">',
+            heartsRow(round.bossHp || 0, round.bossHpMax || 1, 'boss', brokeBoss),
             '<span class="boss-tag">', esc(BOSS_NAMES[round.bossKey] || 'BOSS'), '</span></div>',
         '</div>',
         '<div class="arena-floor">',
@@ -780,11 +919,12 @@
             '<svg class="fighter-sprite" viewBox="0 0 32 32" shape-rendering="crispEdges" aria-hidden="true">',
               '<use href="#', BOSS_ART[round.bossKey] || 'boss-u1', '"></use></svg>',
           '</div>',
+          '<div class="fx" id="fx"></div>',
           '<div class="slash" id="slash"></div>',
           '<div class="dmg" id="dmg"></div>',
         '</div>',
         '<div class="arena-tip">',
-          '<span>答对就冲上去打，答错就要挨一下</span>',
+          '<span>', esc(attackHint(round.bossKey)), '</span>',
           '<button type="button" class="arena-quit" data-action="boss-quit">退出战斗</button>',
         '</div>',
       '</div>',
@@ -900,6 +1040,8 @@
     if (round.battle === 'boss') {
       if (correct) round.bossHp = Math.max(0, (round.bossHp || 0) - 1);
       else round.myHp = Math.max(0, (round.myHp || 0) - 1);
+      // 记下刚碎掉的是哪一颗心，下一次渲染播一次碎裂动画
+      if (correct) round.brokeBoss = round.bossHp; else round.brokeMe = round.myHp;
       arenaHit(correct, 1);
       round.phase = 'anim';               // 动画期间锁住输入，防止连点跳过战斗
       var over = round.bossHp <= 0 ? 'win'
@@ -1288,15 +1430,39 @@
       case 'boss-board': openBossBoard(); break;
       case 'boss-fight': startBoss(d.key); break;
       case 'boss-quit': quitBoss(); break;
-      case 'prize-pool': openPrizePool(); break;
-      case 'prize-add': {
-        var inp = document.getElementById('prize-name');
-        if (inp && St.addPrize(inp.value)) { toast('已加入奖品池'); }
-        else toast('奖品名不能为空，或者已经有了');
-        openPrizePool();
+      case 'gift-pool':
+        openGiftPool();
+        refreshGiftPool().then(function (changed) { if (changed) openGiftPool(); });
+        break;
+      case 'gift-refresh':
+        toast('正在刷新…');
+        refreshGiftPool().then(function (changed) {
+          openGiftPool(changed ? '' : '已是最新');
+        });
+        break;
+      case 'gift-add': {
+        var gn = document.getElementById('gift-name');
+        var gt = document.getElementById('gift-tier');
+        var gname = gn ? gn.value.replace(/\s+/g, ' ').trim().slice(0, 16) : '';
+        if (!gname) { toast('先写个礼物名字'); break; }
+        if (!window.YWCloud || !window.YWCloud.isReady()) { openGiftPool('云端没连上，礼物库暂时改不了'); break; }
+        window.YWCloud.addGift({ name: gname, tier: gt ? gt.value : 'white', createdBy: St.giftOwner() })
+          .then(function () { return refreshGiftPool(); })
+          .then(function () { toast('已放进礼物库'); openGiftPool(); })
+          .catch(function (e) { openGiftPool(e.message || '没放进去，待会儿再试'); });
         break;
       }
-      case 'prize-remove': St.removePrize(d.name); openPrizePool(); break;
+      case 'gift-del': {
+        if (!St.canManageGifts()) { toast('只有礼物管理员能删'); break; }
+        if (!window.YWCloud || !window.YWCloud.isReady()) { openGiftPool('云端没连上，暂时删不了'); break; }
+        var gid = d.id;
+        window.YWCloud.removeGift(gid)
+          .then(function () { return refreshGiftPool(); })
+          .then(function () { toast('已删除'); openGiftPool(); })
+          .catch(function (e) { openGiftPool(e.message || '没删掉，待会儿再试'); });
+        break;
+      }
+      case 'prize-pool': openGiftPool(); break;
       case 'resume-round': {
         var pr = St.loadRound();
         if (!pr) { toast('这一趟已经不在了'); render(); break; }
