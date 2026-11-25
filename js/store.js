@@ -94,6 +94,206 @@
     return { v: 3, activeId: null, profiles: {} };
   }
 
+  /* ---------- 专项突破：阅读理解 / 生词认记背默 ----------
+   * 与原有砖、段位、碎片完全隔离：只记专项掌握度与错字本，走 1/3/7 天回访。
+   * 默写按「字」判定：一个词里错哪个字就记哪个字，不错整词一刀切。
+   */
+  var COACH_GAPS = [1, 3, 7];
+  function coachState() {
+    if (!S.coach) S.coach = { read: {}, words: {}, wordWrong: {}, due: {} };
+    var C = S.coach;
+    C.read = C.read || {}; C.words = C.words || {};
+    C.wordWrong = C.wordWrong || {}; C.due = C.due || {};
+    return C;
+  }
+  function coachReadMastery(layer) {
+    var h = (coachState().read[layer] || {}).h || [];
+    if (!h.length) return 0;
+    var sum = 0, w = 0;
+    h.slice(-8).forEach(function (ok, i) { var wt = i + 1; w += wt; if (ok) sum += wt; });
+    return w ? Math.round(sum / w * 100) : 0;
+  }
+  function coachWordMastery(id) {
+    var e = coachState().words[id];
+    return e ? (e.pct || 0) : 0;
+  }
+  // 默写：逐字比对，返回每个字的对错；错的字才进错字本
+  function checkDictation(wordId, input) {
+    var w = (window.YW_COACH_WORDS || []).filter(function (x) { return x.id === wordId; })[0];
+    if (!w) return { ok: false, reason: '找不到这个词' };
+    var raw = String(input == null ? '' : input).replace(/[\s，。！？、：；"'·]/g, '');
+    var target = w.word, chars = target.split(''), typed = raw.split('');
+    var flags = chars.map(function (c, i) { return typed[i] === c; });
+    var right = flags.filter(Boolean).length;
+    var C = coachState(), t = todayKey();
+    var entry = C.words[wordId] || { pct: 0, n: 0, ok: 0, wrongChars: {} };
+    entry.n = (entry.n || 0) + 1;
+    entry.last = t;
+    flags.forEach(function (good, i) {
+      if (good) return;
+      entry.wrongChars = entry.wrongChars || {};
+      entry.wrongChars[chars[i]] = (entry.wrongChars[chars[i]] || 0) + 1;
+      var wid = wordId + ':' + chars[i];
+      var we = C.wordWrong[wid] || { ch: chars[i], word: target, stage: 0, due: t, seen: 0, ok: 0 };
+      we.seen = (we.seen || 0) + 1; we.due = t; C.wordWrong[wid] = we;
+    });
+    if (right === chars.length) {
+      entry.ok = (entry.ok || 0) + 1;
+      var perfectRate = Math.round(entry.ok / entry.n * 100);
+      entry.pct = Math.max(entry.pct || 0, Math.min(100, perfectRate + 20));
+      // 全对一次就推进该词所有错字的复习间隔
+      Object.keys(C.wordWrong).forEach(function (k) {
+        if (k.indexOf(wordId + ':') !== 0) return;
+        var we2 = C.wordWrong[k];
+        we2.ok = (we2.ok || 0) + 1;
+        we2.stage = Math.min((we2.stage || 0) + 1, COACH_GAPS.length - 1);
+        we2.due = addDays(t, COACH_GAPS[we2.stage]);
+      });
+    } else {
+      entry.pct = Math.max(0, Math.round(right / chars.length * 100));
+    }
+    C.words[wordId] = entry;
+    persist();
+    return { ok: right === chars.length, word: target, flags: flags, right: right,
+             total: chars.length, pct: entry.pct, wrongChars: chars.filter(function (c, i) { return !flags[i]; }) };
+  }
+  function coachRecordReading(layer, correct) {
+    var C = coachState();
+    var e = C.read[layer] || { h: [] };
+    e.h = (e.h || []).concat([!!correct]).slice(-8);
+    e.n = (e.n || 0) + 1;
+    if (correct) e.ok = (e.ok || 0) + 1;
+    C.read[layer] = e;
+    persist();
+    return coachReadMastery(layer);
+  }
+  function coachDueWords(date) {
+    var d = date || todayKey(), C = coachState();
+    return Object.keys(C.wordWrong)
+      .filter(function (k) { return C.wordWrong[k].due <= d; })
+      .map(function (k) { return Object.assign({ id: k }, C.wordWrong[k]); });
+  }
+  function weakLayers() {
+    return (window.YW_COACH_LAYERS || []).map(function (l) {
+      return { key: l.key, label: l.label, pct: coachReadMastery(l.key) };
+    }).sort(function (a, b) { return a.pct - b.pct; });
+  }
+
+  /* ---------- 弱点：把专项考点接进 BOSS 通关 ----------
+   * 光练不加成，孩子没有理由去练；所以每只 boss 认一个弱点，弱点练到门槛就带加成出战：
+   *   阅读类（某一层）→ 我方 +1 颗心（看懂了题意，少挨一下）
+   *   生词类（认记背默）→ boss −1 颗心（字认准了，出手更重）
+   * 门槛随难度抬高（普通 50 / 噩梦 65 / 地狱 80）：
+   * 想打更难的档，就得先把这一档的短板再练上去，练习和通关互为因果。
+   */
+  var BOSS_WEAK = {
+    u1: { kind: 'read', layer: 'info',   tip: '它把关键句藏在段落里，先练「找信息」' },
+    u2: { kind: 'read', layer: 'gist',   tip: '它说话绕圈，先练「概括内容」' },
+    u3: { kind: 'read', layer: 'word',   tip: '它爱换词糊弄人，先练「理解词句」' },
+    u4: { kind: 'read', layer: 'feel',   tip: '它专挑心情下手，先练「体会情感」' },
+    u5: { kind: 'read', layer: 'craft',  tip: '它的招都是花样，先练「赏析方法」' },
+    u6: { kind: 'read', layer: 'lesson', tip: '它绕完还要问你道理，先练「感悟启示」' },
+    u7: { kind: 'word', layer: '',       tip: '它烧的是字，先把生词默写练稳' },
+    u8: { kind: 'word', layer: '',       tip: '它把词语撞散，先把生词默写练稳' },
+    midterm: { kind: 'word', layer: '',  tip: '它把词序打乱，先把生词默写练稳' },
+    final: { kind: 'read', layer: '',    tip: '它六层通考，先把最弱的那一层补上' },
+  };
+  var WEAK_NEED = { normal: 50, nightmare: 65, hell: 80 };
+  var WORD_COVER = 8;   // 生词弱点按「至少练过 8 个词」折算，防止只默对 1 个词就满格
+  function layerLabel(key) {
+    var l = (window.YW_COACH_LAYERS || []).filter(function (x) { return x.key === key; })[0];
+    return l ? l.label : '阅读';
+  }
+  // 生词总体掌握：练过的词平均分 × 覆盖系数（练够 8 个词才计满分）
+  function coachWordStat() {
+    var C = coachState(), ids = Object.keys(C.words).filter(function (id) {
+      return (C.words[id].n || 0) > 0;
+    });
+    var avg = ids.length
+      ? Math.round(ids.reduce(function (n, id) { return n + (C.words[id].pct || 0); }, 0) / ids.length)
+      : 0;
+    var pct = Math.round(avg * Math.min(1, ids.length / WORD_COVER));
+    return { count: ids.length, cover: WORD_COVER, avg: avg, pct: pct };
+  }
+  // 阅读六层综合：只算动过手的层，一层没练时是 0，不是「默认满分」
+  function coachReadOverall() {
+    var ps = [];
+    (window.YW_COACH_LAYERS || []).forEach(function (l) {
+      if (hasLayerTry(l.key)) ps.push(coachReadMastery(l.key));
+    });
+    if (!ps.length) return 0;
+    return Math.round(ps.reduce(function (a, b) { return a + b; }, 0) / ps.length);
+  }
+  function hasLayerTry(key) {
+    var e = coachState().read[key];
+    return !!(e && (e.n || 0) > 0);
+  }
+  function bossWeakInfo(key, league) {
+    var w = BOSS_WEAK[key] || BOSS_WEAK.u1;
+    var pct, label;
+    if (w.kind === 'word') {
+      pct = coachWordStat().pct;
+      label = '生词默写';
+    } else if (w.layer) {
+      pct = coachReadMastery(w.layer);
+      label = layerLabel(w.layer);
+    } else {
+      pct = coachReadOverall();
+      label = '六层综合';
+    }
+    var need = WEAK_NEED[league] || WEAK_NEED.normal;
+    return {
+      key: key, kind: w.kind, layer: w.layer || '', label: label, league: league,
+      pct: pct, need: need, gap: Math.max(0, need - pct), ready: pct >= need,
+      perk: w.kind === 'word' ? 'bosshp' : 'myhp',
+      perkText: w.kind === 'word' ? 'boss 少 1 颗心' : '出战多 1 颗心',
+      tip: w.tip,
+    };
+  }
+  // 哪只 boss 把某一层（或生词）当弱点——练习面板上用来点名，避免文案和映射走偏
+  function bossForWeak(kind, layer) {
+    var keys = Object.keys(BOSS_WEAK);
+    for (var i = 0; i < keys.length; i++) {
+      var w = BOSS_WEAK[keys[i]];
+      if (w.kind !== kind) continue;
+      if (kind === 'word') return keys[i];
+      if (w.layer === layer) return keys[i];
+    }
+    return '';
+  }
+  // 弱点已破时把加成落到这一场的血条上（心数永远不超过题数）
+  function applyWeakBuff(spec, weak) {
+    if (!spec || !weak || !weak.ready) return spec;
+    if (weak.perk === 'myhp') spec.myHp = (Number(spec.myHp) || 0) + 1;
+    else spec.bossHp = Math.max(1, (Number(spec.bossHp) || 1) - 1);
+    return spec;
+  }
+  // 生词组卷：先到期的错字，再从没练过的词里挑，最后才是已经练得不错的
+  function coachWordSet(bookId, n) {
+    var all = (window.YW_COACH_WORDS || []).filter(function (w) { return w.book === bookId; });
+    if (all.length < (n || 4)) all = (window.YW_COACH_WORDS || []).slice();
+    var C = coachState(), due = {};
+    Object.keys(C.wordWrong).forEach(function (k) { due[C.wordWrong[k].word] = 1; });
+    var pool = all.map(function (w) {
+      var e = C.words[w.id] || {};
+      var s = (due[w.word] ? -100 : 0) + (e.n ? (e.pct || 0) : 50) + Math.random() * 6;
+      return { w: w, s: s };
+    }).sort(function (a, b) { return a.s - b.s; });
+    return pool.slice(0, n || 4).map(function (x) { return x.w; });
+  }
+  // 「认 / 记 / 背」三步答对只把掌握度推到 40：认得出不等于写得对，
+  // 想过弱点门槛（≥50）必须真的在「默」这一步默对一次。
+  function coachWordDrill(id, ok) {
+    if (!ok) return coachWordMastery(id);
+    var C = coachState();
+    var e = C.words[id] || { pct: 0, n: 0, ok: 0, wrongChars: {} };
+    e.drill = (e.drill || 0) + 1;
+    e.pct = Math.max(e.pct || 0, Math.min(40, 12 + (e.drill - 1) * 7));
+    C.words[id] = e;
+    persist();
+    return e.pct;
+  }
+
   // 当前册次：组卷、单元名、BOSS 卡都依赖它；切档案/切年级后必须同步
   function syncBookContext() {
     if (!window.YW_BOOK_OF || !S) return;
@@ -384,6 +584,7 @@
       }),
       // 字块大陆进度：解锁/征服/段位/准备度是长期成长，必须能换设备带走。
       // 券与连对是每日配额，恢复时只在「快照日期就是今天」才生效。
+      coach: (function () { var C = coachState(); return { read:C.read, words:C.words, wordWrong:C.wordWrong, due:C.due }; })(),
       league: (function () {
         var L = leagueState();
         return {
@@ -441,6 +642,7 @@
       S.digLesson = normalizeLesson(S.digUnit, p.dig.lesson, true);
     }
     if (p.examScope) S.examScope = p.examScope;
+    if (p.coach) { var C = coachState(); ['read','words','wordWrong'].forEach(function(k){ if (p.coach[k]) C[k] = p.coach[k]; }); }
     // 碎片与战利品：快照是「当天全量」，以快照为准；老 loot 没有 uid 时补齐
     if (typeof p.shards === 'number') S.shards = p.shards;
     if (p.loot) {
@@ -870,6 +1072,13 @@
       challenge: !!r.challenge,
       battle: r.battle === 'boss' ? 'boss' : '',
       bossKey: r.bossKey || '',
+      league: r.league || '',
+      training: !!r.training,
+      wrongDmg: Number(r.wrongDmg) || 1,
+      coach: r.coach || '',
+      layer: r.layer || '',
+      weak: r.weak || null,
+      cw: r.cw || null,
       bossHp: Number(r.bossHp) || 0,
       bossHpMax: Number(r.bossHpMax) || 0,
       myHp: Number(r.myHp) || 0,
@@ -877,7 +1086,7 @@
       fillMode: r.fillMode === 'choice' ? 'choice' : 'fill',
       fillInput: r.fillInput || '',
       orderPicks: (r.orderPicks || []).slice(0, 2),
-      items: r.items.map(function (it) {
+      items: (r.items || []).map(function (it) {
         return { q: it.q.id, isReview: !!it.isReview, outKind: it.outKind || (it.asFill ? 'fill' : '') };
       }),
       idx: r.idx || 0,
@@ -889,13 +1098,16 @@
   }
   function loadRound() {
     var p = S.pendingRound;
-    if (!p || !p.items || !p.items.length || p.phase === 'done') return null;
-    var items = p.items.map(function (x) {
+    if (!p || p.phase === 'done') return null;
+    // 生词闯关没有「题」，进度全在 cw 里；它也要能刷新续上，所以单独放行
+    var isWord = p.coach === 'word' && !!p.cw;
+    if ((!p.items || !p.items.length) && !isWord) return null;
+    var items = (p.items || []).map(function (x) {
       var q = window.YW_Q_BY_ID[x.q];
       return q ? { q: q, isReview: !!x.isReview,
                    outKind: x.outKind || (x.asFill ? 'fill' : '') } : null;
     }).filter(Boolean);
-    if (!items.length) return null;
+    if (!items.length && !isWord) return null;
     return {
       spec: p.spec || {}, label: p.label || '练习', note: p.note || '',
       mode: p.mode || 'daily', items: items,
@@ -903,6 +1115,13 @@
       challenge: !!p.challenge,
       battle: p.battle === 'boss' ? 'boss' : '',
       bossKey: p.bossKey || '',
+      league: p.league || '',
+      training: !!p.training,
+      wrongDmg: Number(p.wrongDmg) || 1,
+      coach: p.coach || '',
+      layer: p.layer || '',
+      weak: p.weak || null,
+      cw: p.cw || null,
       bossHp: Number(p.bossHp) || 0,
       bossHpMax: Number(p.bossHpMax) || 0,
       myHp: Number(p.myHp) || 0,
@@ -910,8 +1129,8 @@
       fillMode: p.fillMode === 'choice' ? 'choice' : 'fill',
       fillInput: p.fillInput || '',
       orderPicks: (p.orderPicks || []).slice(0, 2),
-      idx: Math.min(p.idx || 0, items.length - 1),
-      results: (p.results || []).slice(0, items.length),
+      idx: items.length ? Math.min(p.idx || 0, items.length - 1) : 0,
+      results: (p.results || []).slice(0, items.length || 99),
       selected: p.selected,
       phase: p.phase === 'feedback' ? 'feedback' : 'ask',
     };
@@ -1017,21 +1236,33 @@
   }
   // 通关记录按「难度:boss」分开，三档各有自己的首次掉落；旧 bossDone 只做总体征服标记
   function isConquered(league, key) { return !!leagueState().conquest[league + ':' + key]; }
+  // 逐只解锁：噩梦的某只 boss，必须先打赢普通里的同一只；地狱同理。
+  // 训练场不在此限制内——它本来就是拿来准备下一档的。
+  function bossUnlocked(league, key) {
+    if (league === 'normal') return true;
+    var prev = league === 'hell' ? 'nightmare' : 'normal';
+    return isConquered(prev, key);
+  }
+  function prevBossName(league, key) {
+    if (league === 'normal') return '';
+    return (league === 'hell' ? '噩梦' : '普通') + '里的这只 boss';
+  }
   function markConquest(league, key) {
     var L = leagueState(), id = league + ':' + key;
     var first = !L.conquest[id];
     if (first) L.conquest[id] = todayKey();
+    // 逐只解锁：打通这一只，只解锁下一难度里的同一只 boss
     var next = null;
     if (first) {
       var i = LEAGUE_KEYS.indexOf(league);
       if (i >= 0 && i < LEAGUE_KEYS.length - 1) {
-        var nk = LEAGUE_KEYS[i + 1];
-        if (!L.unlocked[nk]) { L.unlocked[nk] = true; next = nk; }
+        next = LEAGUE_KEYS[i + 1];
+        L.unlocked[next] = true;   // 兼容旧字段：仅作「该档已开始解锁」标记，不作准入门槛
       }
     }
     gainXp(8 * (leagueInfo(league).xpMul) + (first ? 6 : 0));
     persist();
-    return { first: first, unlocked: next };
+    return { first: first, unlocked: next, bossKey: key };
   }
   // 训练场：不判胜负、不扣券、不掉礼物；只给准备度、经验和「连对 10 题赢回 1 张券」
   // 准备度按「难度:boss」分开：普通练满分不代表地狱也准备好了。
@@ -1259,6 +1490,7 @@
         name: isExam ? (k === 'midterm' ? '墨影将' : '墨影龙')
                      : (window.YW_UNITS.filter(function (u) { return u.id === Number(k.slice(1)); })[0] || {}).name,
         beaten: isConquered(league, k),
+        unlocked: bossUnlocked(league, k),
         tier: isExam ? (k === 'final' ? '大' : '中') : '小',
       };
     });
@@ -1359,6 +1591,13 @@
     leagueUnlocked: leagueUnlocked, leagueLeft: leagueLeft, spendTicket: spendTicket,
     refundTicket: refundTicket,
     isConquered: isConquered, markConquest: markConquest,
+    bossUnlocked: bossUnlocked, prevBossName: prevBossName,
+    coachReadMastery: coachReadMastery, coachWordMastery: coachWordMastery,
+    checkDictation: checkDictation, coachRecordReading: coachRecordReading,
+    coachDueWords: coachDueWords, weakLayers: weakLayers, coachState: coachState,
+    coachWordStat: coachWordStat, coachReadOverall: coachReadOverall,
+    coachWordSet: coachWordSet, coachWordDrill: coachWordDrill,
+    bossWeakInfo: bossWeakInfo, applyWeakBuff: applyWeakBuff, bossForWeak: bossForWeak, WEAK_NEED: WEAK_NEED, layerLabel: layerLabel,
     gainXp: gainXp, rankInfo: rankInfo, pityLeft: pityLeft,
     setTraining: setTraining, trainingReady: trainingReady,
     leagueWeights: leagueWeights,

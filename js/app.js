@@ -515,16 +515,67 @@
   function startBoss(key, league) {
     league = St.LEAGUES[league] ? league : 'normal';
     if (St.isGuest()) { toast('取个昵称才能打 boss 和收战利品'); return; }
-    if (!St.leagueUnlocked(league)) { toast('先把上一档的任意 boss 打通关'); return; }
+    if (!St.bossUnlocked(league, key)) {
+      toast('先在' + (league === 'hell' ? '噩梦' : '普通') + '难度打赢这只 boss');
+      return;
+    }
     if (St.leagueLeft(league) <= 0) { toast('今天的挑战券用完了，去训练场练一练'); return; }
     var spec = St.bossSpec(key, league);
     if (!spec) return;
+    // 弱点已破：阅读类多 1 颗心，生词类让 boss 少 1 颗心（心数仍不超过题数）
+    var weak = St.bossWeakInfo(key, league);
+    St.applyWeakBuff(spec, weak);
     if (!St.spendTicket(league)) return;
     startRound(Object.assign({}, spec, {
-      battle: 'boss', bossKey: key,
+      battle: 'boss', bossKey: key, weak: weak,
       label: 'BOSS · ' + (BOSS_NAMES[key] || key),
-      note: '答对就攻击，答错就挨打；打赢收战利品。',
+      note: weak.ready ? '弱点已破，答对就攻击，答错就挨打。'
+                       : '答对就攻击，答错就挨打；它的弱点是「' + weak.label + '」。',
     }));
+  }
+
+  function bossUnit(key) { return /^u\d+$/.test(key) ? Number(key.slice(1)) : 0; }
+
+  // 出战准备：把「弱点」摆到开打之前，专项练习和通关就是同一件事
+  function openBossPrep(key, league) {
+    league = St.LEAGUES[league] ? league : 'normal';
+    if (St.isGuest()) { toast('取个昵称才能打 boss 和收战利品'); return; }
+    if (!St.bossUnlocked(league, key)) {
+      toast('先在' + (league === 'hell' ? '噩梦' : '普通') + '难度打赢这只 boss');
+      return;
+    }
+    var spec = St.bossSpec(key, league), w = St.bossWeakInfo(key, league);
+    // 面板上直接显示「带上弱点加成之后」的血量，免得开打前算不清
+    var shown = St.applyWeakBuff(St.bossSpec(key, league), w);
+    var left = St.leagueLeft(league), pct = Math.min(100, w.pct);
+    overlay([
+      '<h2>', esc(BOSS_NAMES[key] || key), ' · ', esc(St.leagueInfo(league).name), '</h2>',
+      '<div class="prep-stats">',
+        '<span><b>', shown.bossHp, '</b><i>它的心</i></span>',
+        '<span><b>', shown.myHp, '</b><i>我的命</i></span>',
+        '<span><b>', spec.count, '</b><i>题量</i></span>',
+        '<span><b>', left, '</b><i>今日券</i></span>',
+      '</div>',
+      '<div class="weak-box', w.ready ? ' on' : '', '">',
+        '<div class="weak-head"><b>弱点 · ', esc(w.label), '</b>',
+          '<span>', w.pct, '% / ', w.need, '%</span></div>',
+        '<span class="weak-bar"><i style="width:', pct, '%"></i><u style="left:', w.need, '%"></u></span>',
+        '<p class="tiny">', esc(w.tip), '</p>',
+        w.ready
+          ? '<p class="tiny weak-on">弱点已破：这次出战' + esc(w.perkText) + '。</p>'
+          : '<p class="tiny">练到 ' + w.need + '% 就破防，' + esc(w.perkText) +
+            '。还差 <b>' + w.gap + '%</b>。</p>',
+      '</div>',
+      '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn primary" data-action="boss-fight" data-key="', esc(key),
+          '" data-league="', league, '"', left > 0 ? '>' : ' disabled>',
+          left > 0 ? '开打（花 1 张券）' : '今天的券用完了', '</button>',
+        '<button class="btn" data-action="coach-weak" data-key="', esc(key),
+          '" data-league="', league, '">先练弱点 5 题</button>',
+        '<button class="btn ghost" data-action="close-overlay">再想想</button>',
+      '</div>',
+      '<p class="tiny" style="margin-top:6px">练弱点不花券、不掉礼物；练完掌握度立刻算进这只 boss 的加成。</p>',
+    ].join(''));
   }
 
   // 训练场：同一只 boss 的题域，不扣券、不掉礼物、不判胜负；做完给准备度报告
@@ -569,6 +620,7 @@
     var key = round.bossKey, league = round.league || 'normal';
     var name = BOSS_NAMES[key] || key;
     var myHp = round.myHp, myHpMax = round.myHpMax, bossLeft = round.bossHp;
+    var weak = round.weak || St.bossWeakInfo(key, league);
     var hits = round.results.filter(function (r) { return r.correct; }).length;
     // 满血通关 = 掉两次取更好的那档（暗黑式「运气」，奖励答得干净）
     var perfect = won && myHp === myHpMax;
@@ -576,6 +628,8 @@
     var result = won ? St.winBoss(key, gift, { league: league }) : null;
     var rk = St.rankInfo();
     var canAgain = St.leagueUnlocked(league) && St.leagueLeft(league) > 0;
+    // 这一场打完，弱点掌握度可能又变了（战斗中没练，但别的端口可能练过）
+    var weakNow = St.bossWeakInfo(key, league);
     round = null; St.clearRound();
     render();
     var gt = result && result.gift ? (St.GIFT_TIER[result.gift.tier] || St.GIFT_TIER.white) : null;
@@ -583,9 +637,13 @@
       '<h2>', won ? '打赢了 ' + esc(name) + '！' : '被 ' + esc(name) + ' 打退了', '</h2>',
       '<p class="muted">' + esc(St.leagueInfo(league).name) + ' · 答对 ', hits, ' 次 · ',
         won ? ('剩 ' + myHp + ' / ' + myHpMax + ' 颗心') : ('boss 还剩 ' + bossLeft + ' 颗心'), '</p>',
+      won && weak.ready
+        ? '<p class="tiny weak-line">弱点已破 · ' + esc(weak.label) + ' ' + weak.pct + '%，这场' +
+          esc(weak.perkText) + '</p>' : '',
       won && result && result.conquest && result.conquest.first
-        ? '<p class="tiny">这一档首次征服！' + (result.conquest.unlocked
-            ? '解锁「' + esc(St.leagueInfo(result.conquest.unlocked).name) + '」难度。' : '图鉴 +1。') + '</p>' : '',
+        ? '<p class="tiny">' + (result.conquest.unlocked
+            ? '解锁了' + esc(St.leagueInfo(result.conquest.unlocked).name) + '难度的同一只 boss！'
+            : '图鉴 +1。') + '</p>' : '',
       won && result && result.repeat
         ? '<p class="tiny">这一档已经打过它了，礼物只领一次；再来涨经验。</p>' : '',
       won && result && result.noGift && !result.repeat
@@ -600,12 +658,19 @@
       won ? '<p class="tiny">段位 ' + esc(rk.name) + ' · 经验 ' + rk.xp +
              (result ? ' · 保底再 ' + result.pityLeft + ' 次必出精良' : '') + '</p>' : '',
       !won ? '<div class="soft-land"><b>差 ' + bossLeft + ' 下就打倒了</b>' +
-        '<span class="tiny">去训练场练一组，回来再打一次，心就稳了。</span></div>' : '',
+        '<span class="tiny">它的弱点是「' + esc(weakNow.label) + '」，现在已经 ' + weakNow.pct + '%。' +
+          (weakNow.ready ? '弱点已破，下次出战直接带加成。'
+            : '练到 ' + weakNow.need + '%（还差 ' + weakNow.gap + '%）再打，' + esc(weakNow.perkText) + '。') +
+        '</span></div>' : '',
       '<div class="btn-row" style="margin-top:12px">',
-        !won ? '<button class="btn primary" data-action="training-quick" data-key="' + key +
+        !won ? '<button class="btn primary" data-action="coach-weak" data-key="' + esc(key) +
+               '" data-league="' + league + '">练弱点 5 题</button>' : '',
+        !won ? '<button class="btn" data-action="training-quick" data-key="' + key +
                '" data-league="' + league + '">先练 3 题</button>' : '',
         won && canAgain ? '<button class="btn" data-action="boss-fight" data-key="' + key +
                '" data-league="' + league + '">再打一次</button>' : '',
+        won && !weakNow.ready ? '<button class="btn" data-action="coach-weak" data-key="' + esc(key) +
+               '" data-league="' + league + '">练它的弱点</button>' : '',
         '<button class="btn primary" data-action="continent">回到大陆</button>',
         '<button class="btn ghost" data-action="close-overlay">先歇会儿</button>',
       '</div>',
@@ -676,13 +741,20 @@
     }).join('');
     var cards = St.bossList(league).map(function (b) {
       var ready = St.trainingReady(b.key, league);
-      return '<button class="boss-card' + (b.beaten ? ' beaten' : '') + '" data-action="boss-fight" ' +
-        'data-key="' + b.key + '" data-league="' + league + '">' +
+      var w = St.bossWeakInfo(b.key, league);
+      return '<button class="boss-card' + (b.beaten ? ' beaten' : '') +
+          (b.unlocked ? '' : ' locked') + (w.ready ? ' weak-on' : '') + '" ' +
+        'data-action="boss-prep" data-key="' + b.key + '" data-league="' + league + '">' +
         '<svg class="boss-ico"><use href="#' + BOSS_ART[b.key] + '"></use></svg>' +
         '<strong>' + esc(BOSS_NAMES[b.key] || b.name) + '</strong>' +
-        '<span class="tiny">' + b.tier + ' boss · ' + (b.beaten ? '已征服' : '准备度 ' + ready + '%') + '</span>' +
+        '<span class="tiny">' + b.tier + ' boss · ' +
+          (b.beaten ? '已征服' : b.unlocked ? '准备度 ' + ready + '%' :
+            '先打赢' + (league === 'hell' ? '噩梦' : '普通') + '的它') + '</span>' +
         '<span class="boss-ready"><i style="width:' + ready + '%"></i></span>' +
+        '<span class="boss-weak' + (w.ready ? ' on' : '') + '">弱点 ' + esc(w.label) + ' ' +
+          w.pct + '%' + (w.ready ? ' ✓' : '') + '</span>' +
         (b.beaten ? '<span class="boss-flag">✓</span>' : '') +
+        (b.unlocked ? '' : '<span class="boss-lock">🔒</span>') +
       '</button>';
     }).join('');
     var loot = (S().loot || []).slice().reverse();
@@ -691,11 +763,10 @@
       '<div class="league-head"><span class="rank-badge">', esc(rk.name), '</span>',
         '<span class="tiny">经验 ', rk.xp, ' · 保底再 ', St.pityLeft(), ' 次必出精良</span></div>',
       '<div class="league-tabs">', tabs, '</div>',
-      unlocked
-        ? '<p class="muted">' + esc(info.name) + '：今天还剩 <b>' + St.leagueLeft(league) +
-          '</b> 次挑战。题目更活、心数更少；答对攻击，答错掉心。</p>'
-        : '<p class="muted">这一档还没解锁。把 ' + esc(St.leagueInfo(info.unlockAt).name) +
-          ' 的任意 boss 打通关一次就开了。</p>',
+      '<p class="muted">' + esc(info.name) + '：今天还剩 <b>' + St.leagueLeft(league) +
+        '</b> 次挑战。' + (league === 'normal' ? '这是起点，随便挑一只打。'
+          : '每只 boss 都要先在' + esc(St.leagueInfo(info.unlockAt).name) +
+            '打赢同一只才会解锁；带 🔒 的还不能打，可以先去训练场准备。') + '</p>',
       '<div class="boss-grid">', cards, '</div>',
       '<div class="btn-row" style="margin-top:12px">',
         '<button class="btn" data-action="training-board" data-league="' + league + '">训练场 · 不扣券</button>',
@@ -856,6 +927,7 @@
 
   function renderPractice() {
     if (!round) return renderPracticeHome();
+    if (round.coach === 'word' && round.cw) return renderCoachWord();
     return renderQuestion();
   }
 
@@ -895,6 +967,353 @@
     ].join('');
   }
 
+  function coachOverall() {
+    var ls = St.weakLayers();
+    if (!ls.length) return 0;
+    return Math.round(ls.reduce(function (n, x) { return n + x.pct; }, 0) / ls.length);
+  }
+  function wordOverall() { return St.coachWordStat().pct; }
+
+  // 首页一行：最接近破防的那只 boss，一键去练它的弱点
+  function coachBossHint() {
+    if (St.isGuest()) return '<p class="tiny">取了昵称才会记弱点进度。</p>';
+    var best = null;
+    ['normal', 'nightmare'].forEach(function (lg) {
+      St.bossList(lg).forEach(function (b) {
+        if (!b.unlocked) return;
+        var w = St.bossWeakInfo(b.key, lg);
+        if (w.ready) return;
+        if (!best || w.gap < best.gap) best = w;
+      });
+    });
+    if (!best) return '<p class="tiny weak-line">能打的 boss 弱点都破了，去挑战更高难度吧。</p>';
+    return [
+      '<div class="weak-hint">',
+        '<span class="tiny">差一点就破防：<b>', esc(BOSS_NAMES[best.key] || best.key),
+          '</b> 的弱点「', esc(best.label), '」', best.pct, '% → ', best.need, '%（还差 ', best.gap,
+          '%），破了', esc(best.perkText), '。</span>',
+        '<button class="btn sm ghost" data-action="coach-weak" data-key="', esc(best.key),
+          '" data-league="', best.league, '">去练</button>',
+      '</div>',
+    ].join('');
+  }
+
+  /* ---------------- 补短板：阅读六层 / 生词认记背默 ----------------
+   * 这两个专项不是孤立的练习页：每只 boss 认一个弱点（见 store 的 BOSS_WEAK），
+   * 掌握度到门槛就带加成出战。练 = 打得更顺，打 = 检验练得怎样。
+   */
+  var coachLayer = 'info';   // 当前练的阅读层
+
+  function layerMeta(key) {
+    return (window.YW_COACH_LAYERS || []).filter(function (x) { return x.key === key; })[0] || {};
+  }
+
+  function openCoachReading() {
+    if (St.isGuest()) { toast('取个昵称才能记专项进度'); return; }
+    var layers = St.weakLayers();
+    var rows = layers.map(function (l) {
+      var meta = layerMeta(l.key), boss = bossOfWeak('read', l.key);
+      return '<button class="layer-row' + (l.key === coachLayer ? ' on' : '') +
+        '" data-action="coach-layer" data-layer="' + l.key + '">' +
+        '<b>' + esc(l.label) + '</b>' +
+        '<span class="coach-meter"><i style="width:' + l.pct + '%"></i></span>' +
+        '<span class="tiny">' + l.pct + '%</span></button>' +
+        '<p class="tiny layer-hint">' + esc(meta.hint || '') +
+          (boss ? '　·　练好它，打「' + esc(boss) + '」能破弱点' : '') + '</p>';
+    }).join('');
+    var cur = layerMeta(coachLayer);
+    overlay([
+      '<h2>阅读理解 · 分层练</h2>',
+      '<p class="muted">六层从「找信息」到「感悟启示」，下面按最弱排在前面。',
+        '每层的掌握度直接决定哪只 boss 的弱点能不能破。</p>',
+      rows,
+      '<div class="btn-row" style="margin-top:14px">',
+        '<button class="btn primary wide" data-action="coach-start-read">练「' +
+          esc(cur.label || '找信息') + '」5 题</button>',
+        '<button class="btn ghost wide" data-action="close-overlay">收起</button>',
+      '</div>',
+    ].join(''));
+  }
+
+  // 哪只 boss 认这一层当弱点（映射写在 store 里，界面只负责点名）
+  function bossOfWeak(kind, layer) {
+    var k = St.bossForWeak(kind, layer);
+    return k ? (BOSS_NAMES[k] || k) : '';
+  }
+
+  function startCoachReading(layer, unit) {
+    var bk = window.__YW_CURRENT_BOOK__ || 'g3s1';
+    if (layer) coachLayer = layer;
+    var pool = window.YW_COACH_READING(coachLayer, bk).slice();
+    if (!pool.length) { toast('这一层暂时没有题目'); return; }
+    // 打某只 boss 的弱点时，优先出它那个单元的题；不够再全册补
+    if (unit) {
+      pool.sort(function (a, b) {
+        var av = a.unit === Number(unit) ? 0 : 1, bv = b.unit === Number(unit) ? 0 : 1;
+        return av - bv || Math.random() - 0.5;
+      });
+    } else {
+      pool.sort(function () { return Math.random() - 0.5; });
+    }
+    var items = pool.slice(0, 5).map(function (q) { return { q: q, isReview: false }; });
+    stopChallengeTimer(); St.clearRound();
+    round = {
+      spec: { mode: 'topic', coach: 'read', layer: coachLayer },
+      label: '阅读专项 · ' + (layerMeta(coachLayer).label || ''),
+      note: '答完会立刻更新这一层的掌握度，boss 的弱点进度也跟着动。',
+      mode: 'topic', items: items,
+      idx: 0, selected: null, phase: 'ask', results: [],
+      challenge: false, battle: '', league: '', training: false, wrongDmg: 1,
+      coach: 'read', layer: coachLayer,
+      fillMode: 'fill', fillInput: '', orderPicks: [],
+    };
+    tab = 'practice'; St.saveRound(round); closeOverlay(); render();
+    window.scrollTo(0, 0);
+  }
+
+  /* ---------- 生词闯关：认 → 记 → 背 → 默 ---------- */
+  function openCoachWords() {
+    if (St.isGuest()) { toast('取个昵称才能记专项进度'); return; }
+    var ws = St.coachWordStat(), due = St.coachDueWords();
+    var weakWords = (window.YW_COACH_WORDS || []).map(function (w) {
+      return { w: w, pct: St.coachWordMastery(w.id) };
+    }).filter(function (x) { return x.pct < 60; }).sort(function (a, b) { return a.pct - b.pct; }).slice(0, 6);
+    overlay([
+      '<h2>生词闯关 · 认记背默</h2>',
+      '<p class="muted">每个词走四步：认读音 → 记字形 → 背词语 → 默写。',
+        '默写按「字」判定，错哪个字就记哪个字，不整词一刀切。</p>',
+      '<div class="prep-stats">',
+        '<span><b>', ws.pct, '%</b><i>弱点进度</i></span>',
+        '<span><b>', ws.count, '/', ws.cover, '</b><i>已练词数</i></span>',
+        '<span><b>', due.length, '</b><i>到期错字</i></span>',
+      '</div>',
+      weakWords.length ? [
+        '<p class="tiny" style="margin-top:10px">最该练的 ', weakWords.length, ' 个：</p>',
+        '<div class="word-chips">', weakWords.map(function (x) {
+          return '<span class="word-chip">' + esc(x.w.word) + '<i>' + x.pct + '%</i></span>';
+        }).join(''), '</div>',
+      ].join('') : '',
+      '<p class="tiny">认、记、背三步答对最多把掌握度推到 40%；想过 50% 的弱点门槛，必须真的默对一次。</p>',
+      '<div class="btn-row col" style="margin-top:12px">',
+        '<button class="btn primary wide" data-action="coach-word-start">开始一组 · 4 个词 16 步</button>',
+        '<button class="btn ghost wide" data-action="close-overlay">收起</button>',
+      '</div>',
+    ].join(''));
+  }
+
+  function cwWord(id) {
+    return (window.YW_COACH_WORDS || []).filter(function (x) { return x.id === id; })[0] || null;
+  }
+  function shuffle(a) {
+    var x = a.slice();
+    for (var i = x.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = x[i]; x[i] = x[j]; x[j] = t;
+    }
+    return x;
+  }
+  function startCoachWords() {
+    if (St.isGuest()) { toast('取个昵称才能记专项进度'); return; }
+    var words = St.coachWordSet(window.__YW_CURRENT_BOOK__ || 'g3s1', 4);
+    if (!words.length) { toast('这个册次还没有生词'); return; }
+    stopChallengeTimer(); St.clearRound();
+    round = {
+      spec: { mode: 'coach-word' }, mode: 'coach-word', coach: 'word',
+      label: '生词闯关 · 认记背默', note: '默写那一步要真的写出来，错字才会进错字本。',
+      items: [], idx: 0, selected: null, phase: 'ask', results: [],
+      challenge: false, battle: '', league: '', training: false, wrongDmg: 1,
+      fillMode: 'fill', fillInput: '', orderPicks: [],
+      cw: { ids: words.map(function (w) { return w.id; }), i: 0, step: 0, q: null,
+            picked: null, fb: null, typed: '', stats: { ok: 0, all: 0, dictOk: 0, dict: 0 } },
+    };
+    cwBuildStep();
+    tab = 'practice'; St.saveRound(round); closeOverlay(); render();
+    window.scrollTo(0, 0);
+  }
+
+  // 每一步的选项都现算一次并存在 round.cw.q 里：重绘、刷新都不会把选项洗牌
+  function cwBuildStep() {
+    var c = round.cw, w = cwWord(c.ids[c.i]);
+    if (!w) return;
+    var book = w.book;
+    var pool = (window.YW_COACH_WORDS || []).filter(function (x) { return x.book === book; });
+    var q = null;
+    if (c.step === 0) {
+      var pys = [w.py].concat((w.wrong || []).filter(function (p) { return p && p !== w.py; }).slice(0, 3));
+      while (pys.length < 4) pys.push('—');
+      var po = shuffle(pys);
+      q = { mode: 'py', ask: '「' + w.word + '」里的「' + w.ch + '」读什么？',
+            opts: po, ans: po.indexOf(w.py), right: w.py };
+    } else if (c.step === 1) {
+      var chs = [w.ch];
+      pool.forEach(function (x) {
+        if (chs.length < 4 && x.ch !== w.ch && chs.indexOf(x.ch) < 0) chs.push(x.ch);
+      });
+      while (chs.length < 4) chs.push('字');
+      var co = shuffle(chs.slice(0, 4));
+      q = { mode: 'ch', ask: w.py + ' 是哪个字？', opts: co, ans: co.indexOf(w.ch),
+            right: w.ch, sub: '写的是「' + w.word + '」' };
+    } else if (c.step === 2) {
+      var ws = [w.word];
+      pool.forEach(function (x) {
+        if (ws.length < 4 && x.word !== w.word && x.word.length === w.word.length && ws.indexOf(x.word) < 0) ws.push(x.word);
+      });
+      while (ws.length < 4) ws.push(w.word + '儿');
+      var wo = shuffle(ws.slice(0, 4));
+      q = { mode: 'word', ask: '只给拼音，选出正确的词：', opts: wo, ans: wo.indexOf(w.word),
+            right: w.word, sub: w.py };
+    } else {
+      q = { mode: 'dict', ask: '把这个词写下来', right: w.word, sub: w.py };
+    }
+    c.q = q; c.picked = null; c.fb = null; c.typed = '';
+  }
+
+  function cwPick(idx) {
+    var c = round.cw, q = c.q;
+    if (!q || q.mode === 'dict' || c.fb) return;
+    var ok = Number(idx) === q.ans;
+    c.picked = Number(idx);
+    c.fb = { ok: ok, right: q.right };
+    c.stats.all += 1;
+    if (ok) c.stats.ok += 1;
+    St.coachWordDrill(c.ids[c.i], ok);
+    St.gainXp(ok ? 1 : 0);   // 认记背答对也涨一点经验，专项练习同样往段位里走
+    St.saveRound(round);
+    render();
+  }
+
+  function cwDict() {
+    var c = round.cw, el = document.getElementById('cw-input');
+    var val = el ? el.value : c.typed;
+    if (!val || !String(val).trim()) { toast('先写下来试试，写错也没关系'); if (el) el.focus(); return; }
+    c.typed = String(val).trim();
+    var r = St.checkDictation(c.ids[c.i], c.typed);
+    c.stats.dict += 1;
+    if (r.ok) c.stats.dictOk += 1;
+    St.gainXp(r.ok ? 3 : 1);  // 默写是硬功夫，对了给得多，错了也给一点（确定性成长）
+    c.fb = { ok: r.ok, right: r.word, flags: r.flags, wrongChars: r.wrongChars || [] };
+    St.saveRound(round);
+    render();
+  }
+
+  function cwNext() {
+    var c = round.cw;
+    if (c.step < 3) {
+      c.step += 1;
+      cwBuildStep();
+      St.saveRound(round); render();
+      window.scrollTo(0, 0);
+      return;
+    }
+    c.i += 1; c.step = 0;
+    if (c.i >= c.ids.length) { cwFinish(); return; }
+    cwBuildStep();
+    St.saveRound(round); render();
+    window.scrollTo(0, 0);
+  }
+
+  function cwFinish() {
+    var st = round.cw.stats, ws = St.coachWordStat();
+    var due = St.coachDueWords();
+    round = null; St.clearRound();
+    render();
+    overlay([
+      '<h2>这一组练完了</h2>',
+      '<div class="prep-stats">',
+        '<span><b>', st.ok, '/', st.all, '</b><i>认记背 对</i></span>',
+        '<span><b>', st.dictOk, '/', st.dict, '</b><i>默写 全对</i></span>',
+        '<span><b>', ws.pct, '%</b><i>弱点进度</i></span>',
+      '</div>',
+      '<p class="muted">生词掌握度 ', ws.pct, '%（已练 ', ws.count, '/', ws.cover, ' 个词）。',
+        due.length ? '还有 ' + due.length + ' 个字等着复习。' : '这次没有留下错字。', '</p>',
+      '<p class="tiny">练到 50% 就能破「生词类」boss 的弱点：它们开局少 1 颗心。</p>',
+      '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn primary" data-action="coach-word-start">再来一组</button>',
+        '<button class="btn" data-action="coach-words">看看进度</button>',
+        '<button class="btn ghost" data-action="close-overlay">收起</button>',
+      '</div>',
+    ].join(''));
+  }
+
+  function renderCoachWord() {
+    var c = round.cw, w = cwWord(c.ids[c.i]);
+    if (!w || !c.q) { round = null; St.clearRound(); return renderPracticeHome(); }
+    var q = c.q, fb = c.fb;
+    var stepNames = ['认', '记', '背', '默'];
+    var dots = c.ids.map(function (id, i) {
+      return '<span class="cw-dot' + (i < c.i ? ' done' : i === c.i ? ' on' : '') + '">' + (i + 1) + '</span>';
+    }).join('');
+    var body;
+    if (q.mode === 'dict') {
+      var flags = fb && fb.flags ? fb.flags : null;
+      body = [
+        '<div class="cw-dict">',
+          '<div class="cw-py">', esc(w.py), '</div>',
+          fb
+            ? '<div class="cw-char-row">' + w.word.split('').map(function (ch, i) {
+                var good = flags ? flags[i] : true;
+                return '<span class="cw-char ' + (good ? 'ok' : 'bad') + '">' + esc(ch) + '</span>';
+              }).join('') + '</div>'
+            : '<p class="tiny">按拼音把词写出来，写错也没关系，正好记下错哪个字。</p>',
+          fb
+            ? '<p class="tiny">' + (fb.ok ? '全对！这个字你记住了。'
+                : '错的字：' + (fb.wrongChars || []).map(function (x) { return '「' + x + '」'; }).join('') +
+                  '　已经记进错字本，明天还会来找你。') + '</p>'
+            : '<div class="cw-input-row">' +
+                '<input id="cw-input" class="cw-input" maxlength="6" autocomplete="off" ' +
+                  'value="', esc(c.typed || ''), '" placeholder="在这里写" />' +
+                '<button class="btn primary" data-action="cw-dict">写好了</button>' +
+              '</div>',
+        '</div>',
+      ].join('');
+    } else {
+      var opts = (q.opts || []).map(function (o, i) {
+        var cls = 'opt';
+        if (fb) {
+          if (i === q.ans) cls += ' correct';
+          else if (i === c.picked) cls += ' incorrect';
+        }
+        return '<button type="button" class="' + cls + '" data-action="cw-pick" data-idx="' + i + '">' +
+          '<span class="key">' + 'ABCD'[i] + '</span><span>' + esc(o) + '</span></button>';
+      }).join('');
+      body = [
+        '<div class="cw-ask"><b>', esc(q.ask), '</b>',
+          q.sub && !fb ? '<span class="tiny">' + esc(q.sub) + '</span>' : '',
+          fb ? '<span class="tiny">' + (fb.ok ? '对了：' + esc(fb.right) : '应该是：' + esc(fb.right)) + '</span>' : '',
+        '</div>',
+        '<div class="options">', opts, '</div>',
+      ].join('');
+    }
+    view.innerHTML = [
+      '<div class="section-title"><h2>', esc(round.label), '</h2><span class="tiny">',
+        '第 ', c.i + 1, ' / ', c.ids.length, ' 个词</span></div>',
+      '<div class="card cw-card">',
+        '<div class="cw-top">',
+          '<div class="cw-steps">', stepNames.map(function (n, i) {
+            return '<span class="cw-step' + (i === c.step ? ' on' : i < c.step ? ' done' : '') + '">' +
+              n + '</span>';
+          }).join('<i>›</i>'), '</div>',
+          '<div class="cw-dots">', dots, '</div>',
+        '</div>',
+        body,
+        fb ? '<div class="btn-row" style="margin-top:12px">' +
+          '<button class="btn primary wide" data-action="cw-next">' +
+            (c.step === 3 ? (c.i + 1 >= c.ids.length ? '看看这组的成绩' : '下一个词') : '下一步 · ' +
+              stepNames[c.step + 1]) + '</button></div>' : '',
+      '</div>',
+      '<div class="btn-row" style="margin-top:10px">',
+        '<button class="btn ghost sm" data-action="cw-quit">先练到这儿</button>',
+      '</div>',
+    ].join('');
+    var inp = document.getElementById('cw-input');
+    if (inp && !fb) {
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); cwDict(); }
+      });
+      inp.focus();
+    }
+  }
+
   function renderPracticeHome() {
     var s = S(), d = St.todayKey(), today = s.daily[d] || { attempts: 0, correct: 0, careless: 0 };
 
@@ -903,13 +1322,17 @@
     var todo = '';
     if (pending) {
       var doneCount = pending.results.length;
-      var dots = mobRow(pending.items, pending.results, pending.idx);
+      var isWord = pending.coach === 'word' && pending.cw;
+      var dots = isWord ? '' : mobRow(pending.items, pending.results, pending.idx);
       todo = [
         '<div class="card todo-card">',
           '<span class="q-meta">未完成 · 待办</span>',
-          '<h3>', esc(pending.label), ' 还差 ', pending.items.length - doneCount, ' 位</h3>',
-          '<p class="muted">已经做到第 ', Math.min(doneCount + 1, pending.items.length), ' / ',
-            pending.items.length, ' 位，随时可以接着做完。</p>',
+          isWord
+            ? ['<h3>', esc(pending.label), ' 停在第 ', (pending.cw.i || 0) + 1, ' 个词</h3>',
+               '<p class="muted">认记背默四步走完一个词才算过，随时可以接着做。</p>'].join('')
+            : ['<h3>', esc(pending.label), ' 还差 ', pending.items.length - doneCount, ' 位</h3>',
+               '<p class="muted">已经做到第 ', Math.min(doneCount + 1, pending.items.length), ' / ',
+                 pending.items.length, ' 位，随时可以接着做完。</p>'].join(''),
           '<div class="round-dots" style="margin:10px 0">', dots, '</div>',
           '<div class="btn-row">',
             '<button class="btn primary" data-action="resume-round">接着做完</button>',
@@ -947,6 +1370,26 @@
         '</div>',
         '<p class="tiny" style="margin-top:8px">今天做过 ', today.attempts, ' 题，一次就对 ', today.correct, ' 题。',
           St.isGuest() ? '游客模式：进度不存，先取个昵称吧。' : '打到一半会自动存成待办。', '</p>',
+      '</div>',
+      '<div class="card coach-card">',
+        '<h2>补短板 · 练的是 boss 的弱点</h2>',
+        '<p class="muted">每只 boss 认一个弱点：阅读练到门槛，出战多 1 颗心；生词默写练到门槛，它少 1 颗心。</p>',
+        '<div class="coach-grid">',
+          '<button class="coach-entry" data-action="coach-reading">',
+            '<b>阅读理解</b><span class="tiny">六层递进 · 找到卡住的那一层</span>',
+            '<span class="coach-meter"><i style="width:', coachOverall(), '%"></i></span>',
+            '<span class="tiny">练过 ', St.weakLayers().filter(function (x) { return x.pct > 0; }).length,
+              '/6 层 · 最弱：', esc((St.weakLayers()[0] || {}).label || '—'),
+              ' ' + ((St.weakLayers()[0] || {}).pct || 0), '%</span>',
+          '</button>',
+          '<button class="coach-entry" data-action="coach-words">',
+            '<b>生词闯关</b><span class="tiny">认 → 记 → 背 → 默，错哪个字记哪个字</span>',
+            '<span class="coach-meter"><i style="width:', wordOverall(), '%"></i></span>',
+            '<span class="tiny">当前 ', wordOverall(), '% · 已练 ', St.coachWordStat().count,
+              ' 词 · 待复习错字 ', St.coachDueWords().length, '</span>',
+          '</button>',
+        '</div>',
+        coachBossHint(),
       '</div>',
       St.isGuest() ? guestCard() : towerCard(),
       St.isGuest() ? '<p class="tiny" style="text-align:center">想要错题本和回忆录，就取个昵称。</p>'
@@ -1032,6 +1475,7 @@
     // 刚被打掉的心：只在这一次渲染里标一下，播完碎裂动画就清掉
     var brokeMe = round.brokeMe; round.brokeMe = null;
     var brokeBoss = round.brokeBoss; round.brokeBoss = null;
+    var weak = round.weak || (round.bossKey ? St.bossWeakInfo(round.bossKey, round.league || 'normal') : null);
     var bossHtml = round.battle === 'boss' ? [
       '<div class="arena" id="arena">',
         '<div class="arena-top">',
@@ -1041,6 +1485,10 @@
             heartsRow(round.bossHp || 0, round.bossHpMax || 1, 'boss', brokeBoss),
             '<span class="boss-tag">', esc(BOSS_NAMES[round.bossKey] || 'BOSS'), '</span></div>',
         '</div>',
+        weak ? '<div class="weak-strip' + (weak.ready ? ' on' : '') + '">' +
+          '<span>弱点 · ' + esc(weak.label) + ' ' + weak.pct + '%</span>' +
+          (weak.ready ? '<b>已破 · ' + esc(weak.perkText) + '</b>'
+                      : '<span>练到 ' + weak.need + '% 破防</span>') + '</div>' : '',
         '<div class="arena-floor">',
           '<div class="fighter hero" id="f-hero">',
             '<svg class="fighter-sprite" viewBox="0 0 32 32" shape-rendering="crispEdges" aria-hidden="true">',
@@ -1162,6 +1610,8 @@
     var type = correct ? '' : St.classify(q, sel);
     var lvBefore = S().level;
     var payload = St.recordAnswer(q, sel, correct, it.isReview);
+    // 阅读专项：每答一题就更新那一层的掌握度，弱点进度条当场会动
+    if (round.coach === 'read' && round.layer) St.coachRecordReading(round.layer, correct);
     var gained = St.lastGaveBlock();
     var leveled = S().level > lvBefore;
     var last = { qid: q.id, correct: correct, type: type, selected: sel };
@@ -1560,8 +2010,33 @@
       case 'continent': openContinent(); break;
       case 'league-tab': ui.league = d.league; openContinent(); break;
       case 'boss-board': openContinent(); break;
+      case 'boss-prep': openBossPrep(d.key, d.league || ui.league); break;
       case 'boss-fight': startBoss(d.key, d.league || ui.league); break;
       case 'boss-quit': quitBoss(); break;
+      case 'coach-reading': openCoachReading(); break;
+      case 'coach-layer': coachLayer = d.layer; openCoachReading(); break;
+      case 'coach-start-read': startCoachReading(); break;
+      case 'coach-words': openCoachWords(); break;
+      case 'coach-word-start': startCoachWords(); break;
+      case 'coach-weak': {
+        // 从 boss 的弱点直接进对应专项：阅读类按那只 boss 的单元优先出题
+        var wk = St.bossWeakInfo(d.key, d.league || ui.league);
+        if (wk.kind === 'word') startCoachWords();
+        else startCoachReading(wk.layer, bossUnit(d.key));
+        break;
+      }
+      case 'cw-pick': cwPick(d.idx); break;
+      case 'cw-dict': cwDict(); break;
+      case 'cw-next': cwNext(); break;
+      case 'cw-quit': {
+        if (!round || round.coach !== 'word') { render(); break; }
+        confirmSheet('先练到这儿？', '练过的词都记下来了，下次接着从没过的词开始。',
+          '结束这一组', function () {
+            round = null; St.clearRound(); render();
+            toast('已停下，练过的都记着了');
+          });
+        break;
+      }
       case 'training-board': openTrainingBoard(); break;
       case 'training-start': startTraining(d.key, d.league || ui.league, 5); break;
       case 'training-quick': startTraining(d.key, d.league || ui.league, 3); break;
@@ -1619,7 +2094,10 @@
       case 'resume-round': {
         var pr = St.loadRound();
         if (!pr) { toast('这一趟已经不在了'); render(); break; }
-        round = pr; closeOverlay(); render();
+        round = pr;
+        // 生词闯关的选项是「进这一步时现算」的，续做时补算一次
+        if (round.coach === 'word' && round.cw && !round.cw.q) cwBuildStep();
+        closeOverlay(); render();
         if (round.challenge) startChallengeTimer();
         window.scrollTo(0, 0);
         break;
