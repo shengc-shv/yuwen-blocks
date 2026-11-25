@@ -142,7 +142,18 @@
     return ATTACK_HINT[BOSS_ATTACK[key] || 'charge'] || '答对就打它，答错就挨一下';
   }
 
-  function dLabel(k) { return k ? k.slice(5, 7) + '月' + k.slice(8, 10) + '日' : '—'; }
+  // 日期标签：正常是 'YYYY-MM-DD'；老存档/云端恢复里万一是时间戳或脏数据，
+  // 也要能显示，不能因为一个字段把整个列表炸掉。
+  function dLabel(k) {
+    if (!k) return '—';
+    if (typeof k === 'number' || (typeof k === 'string' && !/^\d{4}-\d{2}-\d{2}/.test(k))) {
+      var d = new Date(k);
+      if (!isNaN(d.getTime())) return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+      return '—';
+    }
+    if (typeof k !== 'string') return '—';
+    return k.slice(5, 7) + '月' + k.slice(8, 10) + '日';
+  }
   function kpName(k) { return (window.YW_KP[k] || { label: k }).label; }
   function dimName(d) { return (window.YW_DIMS[d] || { label: '综合' }).label; }
   function topicLabel(v) {
@@ -222,14 +233,69 @@
     ].join('');
   }
 
-  function overlay(html) {
-    closeOverlay();
+  /* ---------------- 历史栈：左滑/返回 = 退一层，而不是退出应用 ----------------
+   * 这里没有路由，所有「进入」都是 render() 重绘，URL 一直不变。
+   * 结果就是手机边缘左滑（浏览器手势后退）找不到可退的历史，直接把应用退掉。
+   * 做法：把「当前在哪」写进 history.state（{tab, overlay}），
+   * 每开一层弹层就 pushState 一条；手势后退时按目标 state 还原界面。
+   */
+  var navSelfBack = 0;   // 我们自己 back() 的计数器，用来和手势后退区分
+
+  function navState() {
+    return { tab: tab, overlay: !!document.getElementById('yw-overlay') };
+  }
+  // 进入新的一层（开弹层用）
+  function navPush() {
+    try { history.pushState(navState(), ''); } catch (e) {}
+  }
+  // 同级替换（切 tab 用，不累积历史，避免要滑好几次才出去）
+  function navReplace() {
+    try { history.replaceState(navState(), ''); } catch (e) {}
+  }
+  function histHasOverlay() { return !!document.getElementById('yw-overlay'); }
+  function closeOverlayRaw() { var o = document.getElementById('yw-overlay'); if (o) o.remove(); }
+
+  // 手势后退：按目标 state 把界面还原回去（这就是「退一层」）
+  function applyNavState(st) {
+    st = st || { tab: 'practice', overlay: false };
+    if (!st.overlay) closeOverlayRaw();
+    if (st.tab && st.tab !== tab) tab = st.tab;
+    render();
+  }
+  window.addEventListener('popstate', function (ev) {
+    if (navSelfBack > 0) { navSelfBack -= 1; return; }   // 自己触发的，界面已由调用方处理好
+    applyNavState(ev.state);
+  });
+
+  function overlay(html, opts) {
+    var had = histHasOverlay();
+    closeOverlayRaw();
     var d = document.createElement('div');
     d.className = 'overlay'; d.id = 'yw-overlay';
-    d.innerHTML = '<div class="sheet">' + html + '</div>';
+    // 每个弹层顶部固定一条「返回」：位置永远在同一个地方，
+    // 不用到页面底部去找「收起」，手势左滑和点这里走同一条路。
+    // 右边再给一个「首页」：从很深的弹层里想直接回去，不用一层层点。
+    var bar = (opts && opts.back === false) ? '' :
+      '<div class="sheet-bar">' +
+        '<button type="button" class="sheet-back" data-action="close-overlay">' +
+          '<span aria-hidden="true">←</span> 返回</button>' +
+        '<button type="button" class="sheet-home" data-action="go-home">首页</button>' +
+      '</div>';
+    d.innerHTML = '<div class="sheet">' + bar + html + '</div>';
     document.body.appendChild(d);
+    // 弹层之间是替换关系（同一层）；只有从「没有弹层」变成「有弹层」才多压一条历史
+    if (!had) navPush();
   }
-  function closeOverlay() { var o = document.getElementById('yw-overlay'); if (o) o.remove(); }
+
+  // 用户层面的「关掉这一层」：摘掉 DOM 的同时退回上一条历史，手势和点按钮走同一条路
+  function closeOverlay() {
+    var o = document.getElementById('yw-overlay');
+    if (o) o.remove();
+    if (history.state && history.state.overlay) {
+      navSelfBack += 1;
+      try { history.back(); } catch (e) { navSelfBack -= 1; }
+    }
+  }
 
   var renameTargetId = null;
   var pendingConfirm = null;
@@ -245,7 +311,7 @@
         '<button class="btn ghost" data-action="confirm-cancel">取消</button>',
         '<button class="btn danger" data-action="confirm-ok">', esc(okLabel), '</button>',
       '</div>',
-    ].join(''));
+    ].join(''), { back: false });   // 确认框要轻，不要顶一条返回栏
   }
 
   // 应用内改名表单：不依赖 window.prompt，可对任意一个使用者改名
@@ -340,6 +406,9 @@
 
   async function boot() {
     try {
+      // 先给自己占一条「根」历史：有了它，手势后退才有东西可退，
+      // 不会一滑就把整个应用退掉。
+      try { history.replaceState({ tab: tab, overlay: false }, ''); } catch (e) {}
       await St.init();
       Cl.init();
       St.setNoAnim(S().noAnim);
@@ -386,7 +455,8 @@
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
       b.classList.toggle('active', b.dataset.tab === tab);
     });
-    if (tab === 'past') renderPast();
+    if (tab === 'gift') renderGift();
+    else if (tab === 'past') renderPast();
     else if (tab === 'map') renderMap();
     else if (tab === 'wrong') renderWrong();
     else renderPractice();
@@ -677,17 +747,80 @@
     ].join(''));
   }
 
+  // 礼物一行：名字单独占一行，来源/档位/分解放到第二行，长名字不会被按钮挤断
   function lootRow(x) {
     var tier = x.tier || 'white';
     var meta = St.GIFT_TIER[tier] || St.GIFT_TIER.white;
     return '<div class="loot-row tier-' + tier + '">' +
       '<span class="tier-dot"></span>' +
-      '<b>' + esc(x.name || x.prize || '礼物') + '</b>' +
-      '<span class="tier-label">' + meta.label + '</span>' +
-      '<span class="tiny">来自 ' + esc(x.from === 'exchange' ? '碎片兑换' : (BOSS_NAMES[x.from] || x.from)) +
-        ' · ' + esc(dLabel(x.at)) + '</span>' +
+      '<div class="lr-main">' +
+        '<b>' + esc(x.name || x.prize || '礼物') + '</b>' +
+        '<span class="lr-meta"><em class="tier-label">' + meta.label + '</em>' +
+          '<span>来自 ' + esc(x.from === 'exchange' ? '碎片兑换' : (BOSS_NAMES[x.from] || x.from)) +
+            ' · ' + esc(dLabel(x.at)) + '</span></span>' +
+      '</div>' +
       (x.uid ? '<button class="btn sm ghost sell-btn" data-action="loot-sell" data-uid="' +
         esc(x.uid) + '">分解 +' + St.shardSell(tier) + '</button>' : '') + '</div>';
+  }
+
+  // 礼物袋现在是底栏正中间那一格（一整页，不是弹层）：
+  // 所有「打开礼物袋」的入口都往这里收，孩子随时一伸手就能摸到。
+  // 礼物库从云端拉：进礼物页才拉，30 秒内不重复拉（分解礼物会触发重绘，别每次都打一次云端）
+  var giftPoolAt = 0;
+  function renderGift() {
+    if (St.isGuest()) { tab = 'practice'; return renderPractice(); }
+    if (Date.now() - giftPoolAt > 30000) { giftPoolAt = Date.now(); refreshGiftPool(); }
+    var loot = lootNewestFirst(S().loot);
+    var pool = St.giftPool();
+    var byTier = {};
+    St.GIFT_TIERS.forEach(function (t) { byTier[t] = 0; });
+    loot.forEach(function (x) { byTier[x.tier || 'white'] = (byTier[x.tier || 'white'] || 0) + 1; });
+    // 四档各拿了几件，一眼看出「还差哪一档」
+    var tierChips = St.GIFT_TIERS.map(function (t) {
+      var meta = St.GIFT_TIER[t], n = byTier[t] || 0;
+      return '<span class="gt-chip tier-' + t + (n ? '' : ' zero') + '"><i class="tier-dot"></i>' +
+        meta.label + '<b>' + n + '</b></span>';
+    }).join('');
+    view.innerHTML = [
+      '<div class="gift-hero">',
+        '<div class="gift-hero-top">',
+          '<h2>我的礼物袋</h2>',
+          '<span class="shard-pill">碎片 <b>', St.shards(), '</b></span>',
+        '</div>',
+        '<p class="muted">打赢 boss 开出来的礼物都在这儿。不想要的可以分解成碎片，攒够了去碎片商店换任意一档。</p>',
+        '<div class="gt-chips">', tierChips, '</div>',
+      '</div>',
+
+      '<div class="btn-row" style="margin-top:10px">',
+        '<button class="btn primary" data-action="shard-shop">碎片商店</button>',
+        '<button class="btn" data-action="gift-pool">礼物库 ', pool.length, ' 件</button>',
+      '</div>',
+
+      '<div class="section-title" style="margin-top:16px"><h2>袋里的礼物</h2>',
+        '<span class="tiny">最新在最上面</span></div>',
+      loot.length
+        ? '<div class="card gift-list-card"><div class="loot-list full">' + loot.map(lootRow).join('') + '</div>' +
+          '<p class="tiny" style="margin-top:8px">分解不是浪费：碎片全档通兑，攒够了想换哪件换哪件。</p></div>'
+        : [
+            '<div class="card gift-empty">',
+              '<b>袋子还是空的</b>',
+              '<p class="tiny">去大陆打赢一只 boss，就能开一次箱。每只 boss 的心数不多，练熟了很好打。</p>',
+              '<button class="btn primary wide" data-action="continent">去字块大陆</button>',
+            '</div>',
+          ].join(''),
+    ].join('');
+  }
+
+  // 旧入口兼容：任何「打开礼物袋」都跳到那一页，不再另开弹层
+  function openGiftBag() {
+    if (St.isGuest()) { toast('取个昵称才能收战利品'); return; }
+    var had = histHasOverlay();
+    closeOverlayRaw();           // 只摘 DOM，历史交给下面统一处理
+    tab = 'gift';
+    render();
+    if (had) navReplace();       // 本来就在一条弹层历史里，改写成礼物页，不叠加
+    else navPush();              // 从别处进来：压一层，左滑能回去
+    window.scrollTo(0, 0);
   }
 
   // 碎片商店：用分解来的字块碎片兑换礼物库里还存在的礼物
@@ -757,7 +890,7 @@
         (b.unlocked ? '' : '<span class="boss-lock">🔒</span>') +
       '</button>';
     }).join('');
-    var loot = (S().loot || []).slice().reverse();
+    var loot = lootNewestFirst(S().loot);
     overlay([
       '<h2>字块大陆 · BOSS 挑战</h2>',
       '<div class="league-head"><span class="rank-badge">', esc(rk.name), '</span>',
@@ -1314,6 +1447,43 @@
     }
   }
 
+  // 按拿到的时间倒序：不依赖数组怎么存，最新的一定排在最前面
+  function lootNewestFirst(loot) {
+    return (loot || []).slice().sort(function (a, b) {
+      var ka = String((a && a.at) || ''), kb = String((b && b.at) || '');
+      return kb.localeCompare(ka);
+    });
+  }
+
+  // 首页战利品卡：一进首页就能看见「我拿到了什么」，不用摸到左上角再往下翻
+  function lootCard(s) {
+    if (St.isGuest()) return '';
+    var loot = lootNewestFirst(s.loot);
+    var recent = loot.slice(0, 4).map(function (x) {
+      var t = x.tier || 'white';
+      var meta = St.GIFT_TIER[t] || St.GIFT_TIER.white;
+      return '<span class="loot-chip tier-' + t + '">' +
+        '<i class="tier-dot"></i>' + esc(x.name || '礼物') +
+        '<em>' + meta.label + '</em></span>';
+    }).join('');
+    return [
+      '<div class="card loot-card">',
+        '<div class="loot-head">',
+          '<h2>我的战利品</h2>',
+          '<span class="shard-pill">碎片 <b>', St.shards(), '</b></span>',
+        '</div>',
+        loot.length
+          ? '<div class="loot-chips">' + recent + '</div>'
+          : '<p class="tiny">还是空的 —— 打赢一只 boss 就能开一次箱。</p>',
+        loot.length > 4 ? '<p class="tiny">袋里还有 ' + (loot.length - 4) + ' 件</p>' : '',
+        '<div class="btn-row" style="margin-top:8px">',
+          '<button class="btn primary" data-action="gift-bag">打开礼物袋</button>',
+          '<button class="btn" data-action="shard-shop">碎片商店</button>',
+        '</div>',
+      '</div>',
+    ].join('');
+  }
+
   function renderPracticeHome() {
     var s = S(), d = St.todayKey(), today = s.daily[d] || { attempts: 0, correct: 0, careless: 0 };
 
@@ -1371,6 +1541,7 @@
         '<p class="tiny" style="margin-top:8px">今天做过 ', today.attempts, ' 题，一次就对 ', today.correct, ' 题。',
           St.isGuest() ? '游客模式：进度不存，先取个昵称吧。' : '打到一半会自动存成待办。', '</p>',
       '</div>',
+      lootCard(s),
       '<div class="card coach-card">',
         '<h2>补短板 · 练的是 boss 的弱点</h2>',
         '<p class="muted">每只 boss 认一个弱点：阅读练到门槛，出战多 1 颗心；生词默写练到门槛，它少 1 颗心。</p>',
@@ -2041,12 +2212,27 @@
       case 'training-start': startTraining(d.key, d.league || ui.league, 5); break;
       case 'training-quick': startTraining(d.key, d.league || ui.league, 3); break;
       case 'shard-shop': openShardShop(); break;
+      case 'gift-bag': openGiftBag(); break;
+      case 'go-home': {
+        // 一层到底：收起弹层 + 回练习首页，历史也退回根，别留下要走两次的空层
+        closeOverlayRaw();
+        tab = 'practice';
+        render();
+        if (history.state && history.state.overlay) {
+          navSelfBack += 1;
+          try { history.back(); } catch (e) { navSelfBack -= 1; }
+        }
+        window.scrollTo(0, 0);
+        break;
+      }
       case 'loot-sell':
         confirmSheet('分解这件礼物？', '分解后它会消失，换成字块碎片，碎片可以去商店换别的礼物。',
           '分解换碎片', function () {
             var r = St.sellLoot(d.uid);
             toast(r.ok ? '分解成 ' + r.gain + ' 块碎片，现有 ' + r.total + ' 块' : (r.reason || '没分成'));
-            openContinent();
+            // 已经在礼物那一页就地重绘，不动历史（确认框刚退过一层，别再叠）
+            if (tab === 'gift') render();
+            else openGiftBag();
           });
         break;
       case 'shard-buy':
@@ -2235,6 +2421,7 @@
     var b = e.target.closest && e.target.closest('[data-action]');
     if (!b || b.disabled) return;
     Promise.resolve(handle(b.dataset.action, b)).catch(function (err) {
+      if (window.console && console.error) console.error('[action:' + b.dataset.action + ']', err && err.stack || err);
       toast(err && err.message ? err.message : '出了点问题');
     });
   });
@@ -2283,7 +2470,16 @@
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
     b.addEventListener('click', function () {
       if (St.isGuest()) { tab = 'practice'; return; }
-      tab = b.dataset.tab; closeOverlay(); render(); window.scrollTo(0, 0);
+      var next = b.dataset.tab;
+      if (next === tab && !histHasOverlay()) return;
+      var fromHome = tab === 'practice' && !histHasOverlay();
+      closeOverlay();          // 有弹层就先退掉这一层（含历史）
+      tab = next;
+      render();
+      // 从首页进别的 tab 压一层：回来时先落回首页，不直接退出应用。
+      // tab 之间切换用 replace，不累积历史，不用沿途把点过的 tab 一个个退回来。
+      if (fromHome && next !== 'practice') navPush(); else navReplace();
+      window.scrollTo(0, 0);
     });
   });
 

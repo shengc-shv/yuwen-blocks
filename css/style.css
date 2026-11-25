@@ -43,7 +43,7 @@ h1, h2, h3, p { margin: 0; }
   max-width: 640px;
   min-height: 100vh;
   margin: 0 auto;
-  padding-bottom: calc(78px + env(safe-area-inset-bottom));
+  padding-bottom: calc(88px + env(safe-area-inset-bottom));
   background: var(--paper);
 }
 
@@ -275,7 +275,8 @@ mark.focus { background: var(--amber); color: var(--ink); padding: 0 2px; font-w
 .tabbar {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
   max-width: 640px; margin: 0 auto;
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
+  overflow: visible;
   background: var(--card); border-top: 3px solid var(--dirt-d);
   padding-bottom: env(safe-area-inset-bottom);
 }
@@ -791,3 +792,79 @@ body.is-guest .sync-bar { color: var(--amber-d); }
   font-size: 26px; font-weight: 700; background: var(--card); border: 3px solid var(--line); }
 .cw-char.ok { color: var(--grass-dd); border-color: var(--grass-dd); background: var(--grass-l); }
 .cw-char.bad { color: var(--red); border-color: var(--red); background: var(--red-l); text-decoration: line-through; }
+
+/* ================= 导航与礼物袋：让「回得去」和「看得见」都成立 =================
+ * 顶部固定返回条：每个弹层的位置都一样，不用滚到底部找「收起」。
+ */
+.sheet-bar { position: sticky; top: -16px; z-index: 3; margin: -16px -16px 10px; padding: 7px 10px;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: var(--paper-2); border-bottom: 2px solid var(--line); }
+.sheet-back { display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px 5px 9px;
+  font-family: inherit; font-size: 13px; font-weight: 700; color: var(--ink);
+  background: var(--card); border: 2px solid var(--line); box-shadow: 2px 2px 0 rgba(0,0,0,.14);
+  cursor: pointer; }
+.sheet-back:active { transform: translate(1px, 1px); box-shadow: none; }
+
+/* 首页战利品卡：孩子一进来先看见「我拿到了什么」，再决定去哪练 */
+.loot-card .loot-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.loot-card h2 { font-size: 16px; margin: 0; }
+.shard-pill { flex: none; padding: 3px 9px; font-size: 11px; font-weight: 700; color: #3f2100;
+  background: var(--amber); border: 2px solid var(--ink); }
+.shard-pill b { font-size: 14px; }
+.loot-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.loot-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%;
+  padding: 5px 8px; font-size: 13px; font-weight: 700; overflow: hidden;
+  background: var(--card); border: 2px solid var(--tier, var(--line)); }
+.loot-chip .tier-dot { width: 8px; height: 8px; flex: none; background: var(--tier, #ccc);
+  border: 2px solid var(--ink); transform: rotate(45deg); }
+.loot-chip em { flex: none; font-size: 10px; font-style: normal; font-weight: 700;
+  padding: 0 4px; color: var(--tier-ink, #222); background: var(--tier, #ccc); }
+
+.sheet-home { padding: 5px 12px; font-family: inherit; font-size: 13px; font-weight: 700; color: var(--ink-2);
+  background: var(--card); border: 2px solid var(--line); box-shadow: 2px 2px 0 rgba(0,0,0,.14); cursor: pointer; }
+.sheet-home:active { transform: translate(1px, 1px); box-shadow: none; }
+
+/* ================= 底栏 C 位：礼物（第 3 格，抬起来的宝箱按钮） =================
+ * 五格里只有它往上凸，孩子视线自然落在中间；其余四格保持原样。
+ */
+/* 图标脱流并抬到栏外，才能又大又凸；标签仍贴到和其它格子同一条基线 */
+.tab-gift { position: relative; justify-content: flex-end; padding-bottom: 10px; }
+.tab-gift svg {
+  position: absolute; top: -17px; left: 50%; width: 46px; height: 46px;
+  padding: 9px; margin: 0; transform: translateX(-50%);
+  color: #3f2100; background: var(--amber);
+  border: 3px solid var(--ink); box-shadow: 0 3px 0 var(--amber-d), var(--shadow);
+  transition: transform .12s ease, background .12s ease;
+}
+.tab-gift span { font-weight: 700; color: var(--ink-2); }
+.tab-gift.active { background: transparent; }
+.tab-gift.active svg { transform: translateX(-50%) translateY(-3px); background: #ffe9a8; }
+.tab-gift.active span { color: var(--amber-d); }
+
+/* ================= 礼物页（一整页，不是弹层） ================= */
+.gift-hero { padding: 13px; background: var(--card); border: 3px solid var(--line); box-shadow: var(--shadow); }
+.gift-hero-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px; }
+.gift-hero-top h2 { font-size: 18px; }
+.gt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.gt-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px;
+  font-size: 12px; font-weight: 700; background: var(--paper-2);
+  border: 2px solid var(--tier, var(--line)); }
+.gt-chip .tier-dot { width: 8px; height: 8px; flex: none; background: var(--tier, #ccc);
+  border: 2px solid var(--ink); transform: rotate(45deg); }
+.gt-chip b { font-size: 13px; }
+.gt-chip.zero { opacity: .45; }
+
+.gift-list-card { padding: 10px 13px; }
+.loot-list.full { max-height: none; overflow: visible; }
+.gift-empty { text-align: center; padding: 22px 16px; }
+.gift-empty b { display: block; font-size: 16px; margin-bottom: 6px; }
+.gift-empty .btn { margin-top: 12px; }
+
+/* 礼物行改成两段式：名字不被「分解」按钮挤成两行 */
+.loot-row { align-items: flex-start; }
+.loot-row .lr-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.loot-row .lr-main > b { font-size: 15px; line-height: 1.35; }
+.loot-row .lr-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  font-size: 11px; color: var(--ink-2); }
+.loot-row .lr-meta em { font-style: normal; }
+.loot-row .sell-btn { margin-top: 2px; }
