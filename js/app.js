@@ -232,6 +232,17 @@
       '</div>',
     ].join('');
   }
+  // 游客首页第一屏就给正门：别让孩子戳一堆「先取昵称」才发现的按钮
+  function guestWelcome() {
+    return [
+      '<div class="card guest-welcome">',
+        '<span class="q-meta">游客模式 · 只练不存</span>',
+        '<h2>取个昵称，把这一趟存下来</h2>',
+        '<p class="muted">现在只能答题。取了昵称才有 boss、战利品、错题本和错题回忆录。</p>',
+        '<button class="btn primary wide" data-action="open-identity">取个昵称（免费，不用注册）</button>',
+      '</div>',
+    ].join('');
+  }
 
   /* ---------------- 历史栈：左滑/返回 = 退一层，而不是退出应用 ----------------
    * 这里没有路由，所有「进入」都是 render() 重绘，URL 一直不变。
@@ -240,9 +251,11 @@
    * 每开一层弹层就 pushState 一条；手势后退时按目标 state 还原界面。
    */
   var navSelfBack = 0;   // 我们自己 back() 的计数器，用来和手势后退区分
+  var overlayStack = []; // 确认框盖住的底层面板 HTML（每盖一层存一条，取消时原样还回去）
+  var homeStateFix = false;
 
   function navState() {
-    return { tab: tab, overlay: !!document.getElementById('yw-overlay') };
+    return { tab: tab, overlay: histHasOverlay(), od: overlayStack.length };
   }
   // 进入新的一层（开弹层用）
   function navPush() {
@@ -257,21 +270,52 @@
 
   // 手势后退：按目标 state 把界面还原回去（这就是「退一层」）
   function applyNavState(st) {
-    st = st || { tab: 'practice', overlay: false };
-    if (!st.overlay) closeOverlayRaw();
+    st = st || { tab: 'practice', overlay: false, od: 0 };
+    // 确认框是独立一层：后退时先把被它盖住的面板一层层还回来，而不是整个丢掉
+    var targetOd = Number(st.od) || 0;
+    while (overlayStack.length > targetOd) restoreOverlayLayer();
+    if (!st.overlay) { closeOverlayRaw(); overlayStack.length = 0; }
     if (st.tab && st.tab !== tab) tab = st.tab;
     render();
   }
   window.addEventListener('popstate', function (ev) {
-    if (navSelfBack > 0) { navSelfBack -= 1; return; }   // 自己触发的，界面已由调用方处理好
+    // 答题中手势左滑：不静默切走，把历史补回去并问一句；进度留在待办，随时能接着做
+    if (round && round.phase !== 'done' && navSelfBack === 0) {
+      try { history.pushState(navState(), ''); } catch (e) {}
+      confirmSheet('这趟还没做完', '现在离开会把进度放进「未完成 · 待办」，回来还能接着做。',
+        '结束这一趟并回首页', function () {
+          St.saveRound(round); round = null; tab = 'practice'; render(); window.scrollTo(0, 0);
+        });
+      return;
+    }
+    if (navSelfBack > 0) {
+      navSelfBack -= 1;
+      // 「首页」走了 history.back()，等它落地后把当前条改写成真正的首页，
+      // 否则历史里还留着旧 tab，下一次左滑会把人跳回去。
+      if (homeStateFix) {
+        homeStateFix = false;
+        try { history.replaceState({ tab: 'practice', overlay: false, od: 0 }, ''); } catch (e) {}
+      }
+      return;   // 自己触发的，界面已由调用方处理好
+    }
     applyNavState(ev.state);
   });
 
-  function overlay(html, opts) {
-    var had = histHasOverlay();
-    closeOverlayRaw();
+  function setOverlayHtml(html) {
     var d = document.createElement('div');
     d.className = 'overlay'; d.id = 'yw-overlay';
+    d.innerHTML = '<div class="sheet">' + html + '</div>';
+    var o = document.getElementById('yw-overlay');
+    if (o) o.remove();
+    document.body.appendChild(d);
+  }
+  function overlay(html, opts) {
+    var had = histHasOverlay();
+    // 确认框是「盖」在底层面板上的一层，要把它下面的内容存起来；
+    // 普通弹层之间仍是替换关系（同一层），不叠加历史。
+    var stacked = !!(opts && opts.stack) && had;
+    if (stacked) overlayStack.push(document.getElementById('yw-overlay').innerHTML);
+    else if (!had) overlayStack.length = 0;
     // 每个弹层顶部固定一条「返回」：位置永远在同一个地方，
     // 不用到页面底部去找「收起」，手势左滑和点这里走同一条路。
     // 右边再给一个「首页」：从很深的弹层里想直接回去，不用一层层点。
@@ -281,16 +325,20 @@
           '<span aria-hidden="true">←</span> 返回</button>' +
         '<button type="button" class="sheet-home" data-action="go-home">首页</button>' +
       '</div>';
-    d.innerHTML = '<div class="sheet">' + bar + html + '</div>';
-    document.body.appendChild(d);
-    // 弹层之间是替换关系（同一层）；只有从「没有弹层」变成「有弹层」才多压一条历史
-    if (!had) navPush();
+    setOverlayHtml(bar + html);
+    if (!had || stacked) navPush();
+  }
+  // 把确认框下面那层面板放回来
+  function restoreOverlayLayer() {
+    var o = document.getElementById('yw-overlay');
+    if (o) o.remove();
+    if (overlayStack.length) setOverlayHtml(overlayStack.pop());
   }
 
   // 用户层面的「关掉这一层」：摘掉 DOM 的同时退回上一条历史，手势和点按钮走同一条路
   function closeOverlay() {
-    var o = document.getElementById('yw-overlay');
-    if (o) o.remove();
+    if (overlayStack.length) restoreOverlayLayer();
+    else closeOverlayRaw();
     if (history.state && history.state.overlay) {
       navSelfBack += 1;
       try { history.back(); } catch (e) { navSelfBack -= 1; }
@@ -311,21 +359,26 @@
         '<button class="btn ghost" data-action="confirm-cancel">取消</button>',
         '<button class="btn danger" data-action="confirm-ok">', esc(okLabel), '</button>',
       '</div>',
-    ].join(''), { back: false });   // 确认框要轻，不要顶一条返回栏
+    ].join(''), { back: false, stack: true });   // 轻，不顶返回栏；但要盖在底层面板上，取消能还回去
   }
 
   // 应用内改名表单：不依赖 window.prompt，可对任意一个使用者改名
   function renameSheet(id) {
     renameTargetId = id || St.profileId();
     var p = St.profileList().filter(function (x) { return x.id === renameTargetId; })[0];
+    var isOwner = !!p && p.name === St.giftOwner();
     overlay([
       '<h2>给这个昵称改名</h2>',
       '<p class="muted">改名只改称呼，存档归属不变，进度不会丢。名字只存在本机，不会上传到云端。</p>',
+      isOwner
+        ? '<p class="tiny" style="color:var(--red)">这是礼物库管理员昵称：云端只认这个名字。' +
+            '改名后会失去往礼物库放礼物、删礼物的权限；改回这个名字就能恢复。</p>'
+        : '',
       '<label class="field"><span>名字（最多 12 个字）</span>',
         '<input id="rename-input" maxlength="12" value="', esc(p ? p.name : ''), '" /></label>',
       '<div class="btn-row">',
         '<button class="btn ghost" data-action="open-me">取消</button>',
-        '<button class="btn primary" data-action="rename-save">保存</button>',
+        '<button class="btn primary" data-action="rename-save">', isOwner ? '仍要改名' : '保存', '</button>',
       '</div>',
     ].join(''));
   }
@@ -345,10 +398,17 @@
     if (again) render();
   }
   function isFreshProfile(s) {
+    // 碎片和战利品也算「动过手」：只拿礼物换过东西的孩子，不能被云端旧档整份盖回去
     return (!s.blocks) && Object.keys(s.saves || {}).length === 0 &&
            Object.keys(s.wrong || {}).length === 0 &&
            (s.attempts || []).length === 0 &&
-           Object.keys(s.daily || {}).length === 0;
+           Object.keys(s.daily || {}).length === 0 &&
+           (s.loot || []).length === 0 && !(Number(s.shards) > 0);
+  }
+  // 分解 / 兑换这类不答题的操作也要立刻落云端，否则当天没再答题就会被旧快照盖掉
+  function syncGiftChange() {
+    if (St.isGuest() || !Cl.isReady()) return;
+    syncDate(St.buildDaySnapshot(St.todayKey()));
   }
   function dateOf(row) { return String(row.save_date || '').slice(0, 10); }
   function applyLatest(rows) {
@@ -449,8 +509,9 @@
   function render() {
     updateChips();
     var g = St.isGuest();
-    // 游客只有练习：没有错题 / 地图 / 回忆录，底部导航整条收起
-    document.querySelector('.tabbar').classList.toggle('hidden', g);
+    // 游客只有练习；答题/对战进行中也把底栏收起，免得孩子误点一下就把题切走
+    var inRound = !!round && round.phase !== 'done';
+    document.querySelector('.tabbar').classList.toggle('hidden', g || inRound);
     if (g) tab = 'practice';
     Array.prototype.forEach.call(document.querySelectorAll('.tab'), function (b) {
       b.classList.toggle('active', b.dataset.tab === tab);
@@ -566,7 +627,7 @@
         '<label class="field" style="margin-top:10px"><span>粘贴另一台设备的存档码</span><input id="space-input" placeholder="把存档码粘在这里" /></label>',
         '<button class="btn wide" data-action="saves-code-restore">粘贴并恢复进度</button>',
       '</details>',
-      '<button class="btn ghost wide" style="margin-top:12px" data-action="close-overlay">收起</button>',
+      '<button class="btn ghost wide" style="margin-top:12px" data-action="close-overlay">关闭</button>',
       '<input type="file" id="import-file" accept=".json,application/json" class="hidden" />',
     ].join(''));
   }
@@ -742,7 +803,7 @@
         won && !weakNow.ready ? '<button class="btn" data-action="coach-weak" data-key="' + esc(key) +
                '" data-league="' + league + '">练它的弱点</button>' : '',
         '<button class="btn primary" data-action="continent">回到大陆</button>',
-        '<button class="btn ghost" data-action="close-overlay">先歇会儿</button>',
+        '<button class="btn ghost" data-action="close-overlay">关闭</button>',
       '</div>',
     ].join(''));
   }
@@ -816,6 +877,7 @@
     if (St.isGuest()) { toast('取个昵称才能收战利品'); return; }
     var had = histHasOverlay();
     closeOverlayRaw();           // 只摘 DOM，历史交给下面统一处理
+    overlayStack.length = 0;
     tab = 'gift';
     render();
     if (had) navReplace();       // 本来就在一条弹层历史里，改写成礼物页，不叠加
@@ -852,7 +914,7 @@
       blocks,
       '<div class="btn-row" style="margin-top:12px">',
         '<button class="btn" data-action="continent">回大陆</button>',
-        '<button class="btn ghost" data-action="close-overlay">收起</button>',
+        '<button class="btn ghost" data-action="close-overlay">关闭</button>',
       '</div>',
     ].join(''));
   }
@@ -905,7 +967,7 @@
         '<button class="btn" data-action="training-board" data-league="' + league + '">训练场 · 不扣券</button>',
         '<button class="btn" data-action="shard-shop">碎片商店（', St.shards(), '）</button>',
         '<button class="btn" data-action="gift-pool">礼物库（', St.giftPool().length, ' 件）</button>',
-        '<button class="btn ghost" data-action="close-overlay">收起</button>',
+        '<button class="btn ghost" data-action="close-overlay">关闭</button>',
       '</div>',
       '<h3 style="margin-top:16px">我的战利品（', loot.length, '）</h3>',
       loot.length ? '<div class="loot-list">' + loot.map(lootRow).join('') + '</div>'
@@ -1013,7 +1075,7 @@
       tierBlocks,
       '<div class="btn-row" style="margin-top:12px">',
         '<button class="btn ghost" data-action="gift-refresh">刷新</button>',
-        '<button class="btn ghost" data-action="close-overlay">收起</button>',
+        '<button class="btn ghost" data-action="close-overlay">关闭</button>',
       '</div>',
     ].join(''));
   }
@@ -1163,7 +1225,7 @@
       '<div class="btn-row" style="margin-top:14px">',
         '<button class="btn primary wide" data-action="coach-start-read">练「' +
           esc(cur.label || '找信息') + '」5 题</button>',
-        '<button class="btn ghost wide" data-action="close-overlay">收起</button>',
+        '<button class="btn ghost wide" data-action="close-overlay">关闭</button>',
       '</div>',
     ].join(''));
   }
@@ -1229,7 +1291,7 @@
       '<p class="tiny">认、记、背三步答对最多把掌握度推到 40%；想过 50% 的弱点门槛，必须真的默对一次。</p>',
       '<div class="btn-row col" style="margin-top:12px">',
         '<button class="btn primary wide" data-action="coach-word-start">开始一组 · 4 个词 16 步</button>',
-        '<button class="btn ghost wide" data-action="close-overlay">收起</button>',
+        '<button class="btn ghost wide" data-action="close-overlay">关闭</button>',
       '</div>',
     ].join(''));
   }
@@ -1363,7 +1425,7 @@
       '<div class="btn-row" style="margin-top:12px">',
         '<button class="btn primary" data-action="coach-word-start">再来一组</button>',
         '<button class="btn" data-action="coach-words">看看进度</button>',
-        '<button class="btn ghost" data-action="close-overlay">收起</button>',
+        '<button class="btn ghost" data-action="close-overlay">关闭</button>',
       '</div>',
     ].join(''));
   }
@@ -1435,7 +1497,7 @@
               stepNames[c.step + 1]) + '</button></div>' : '',
       '</div>',
       '<div class="btn-row" style="margin-top:10px">',
-        '<button class="btn ghost sm" data-action="cw-quit">先练到这儿</button>',
+        '<button class="btn ghost sm" data-action="cw-quit">先练到这儿（进度留着）</button>',
       '</div>',
     ].join('');
     var inp = document.getElementById('cw-input');
@@ -1518,7 +1580,9 @@
       conqAll += St.bossList(k).filter(function (b) { return b.beaten; }).length;
     });
 
+    var guest = St.isGuest();
     view.innerHTML = [
+      guest ? guestWelcome() : '',
       '<div class="section-title"><h2>字块大陆</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
       runCard(s.lastRun),
       todo,
@@ -1529,8 +1593,10 @@
         '<div class="rank-track"><i style="width:', rk.pct, '%"></i></div>',
         '<h2>今天去哪打</h2>',
         '<p class="muted">普通、噩梦、地狱三档，题目和容错都不一样。训练场随便练，不扣次数。</p>',
-        '<button class="btn primary wide continent-entry" data-action="continent">进入字块大陆',
-          '<span class="badge-done">', conqAll, '/30 已征服</span></button>',
+        guest
+          ? '<button class="btn primary wide continent-entry" data-action="open-identity">取个昵称，解锁字块大陆</button>'
+          : '<button class="btn primary wide continent-entry" data-action="continent">进入字块大陆',
+            '<span class="badge-done">', conqAll, '/30 已征服</span></button>',
         '<div class="ticket-row">',
           St.LEAGUE_KEYS.map(function (k) {
             var info = St.leagueInfo(k), on = St.leagueUnlocked(k);
@@ -1546,15 +1612,15 @@
         '<h2>补短板 · 练的是 boss 的弱点</h2>',
         '<p class="muted">每只 boss 认一个弱点：阅读练到门槛，出战多 1 颗心；生词默写练到门槛，它少 1 颗心。</p>',
         '<div class="coach-grid">',
-          '<button class="coach-entry" data-action="coach-reading">',
-            '<b>阅读理解</b><span class="tiny">六层递进 · 找到卡住的那一层</span>',
+          '<button class="coach-entry" data-action="', guest ? 'open-identity' : 'coach-reading', '">',
+            '<b>阅读理解</b><span class="tiny">', guest ? '取昵称后开启 · ' : '', '六层递进 · 找到卡住的那一层</span>',
             '<span class="coach-meter"><i style="width:', coachOverall(), '%"></i></span>',
             '<span class="tiny">练过 ', St.weakLayers().filter(function (x) { return x.pct > 0; }).length,
               '/6 层 · 最弱：', esc((St.weakLayers()[0] || {}).label || '—'),
               ' ' + ((St.weakLayers()[0] || {}).pct || 0), '%</span>',
           '</button>',
-          '<button class="coach-entry" data-action="coach-words">',
-            '<b>生词闯关</b><span class="tiny">认 → 记 → 背 → 默，错哪个字记哪个字</span>',
+          '<button class="coach-entry" data-action="', guest ? 'open-identity' : 'coach-words', '">',
+            '<b>生词闯关</b><span class="tiny">', guest ? '取昵称后开启 · ' : '', '认 → 记 → 背 → 默，错哪个字记哪个字</span>',
             '<span class="coach-meter"><i style="width:', wordOverall(), '%"></i></span>',
             '<span class="tiny">当前 ', wordOverall(), '% · 已练 ', St.coachWordStat().count,
               ' 词 · 待复习错字 ', St.coachDueWords().length, '</span>',
@@ -1578,6 +1644,8 @@
   }
 
   function renderQuestion() {
+    // 动画窗口里离开过：回来时把锁解开，别让孩子对着不能答的题发呆
+    if (round.phase === 'anim') { round.phase = 'ask'; St.saveRound(round); }
     var it = round.items[round.idx], q = it.q, fb = round.phase === 'feedback';
     var last = round.results[round.results.length - 1];
     var dots = mobRow(round.items, round.results, round.idx);
@@ -1714,6 +1782,10 @@
           '<button class="btn primary wide" data-action="submit"' + (round.selected === null ? ' disabled' : '') + '>确认提交并继续</button>' +
         '</div>',
       '</div>',
+      // 底栏在答题时收起了，这里给一个随时能走的正门；进度留着，回来接着做
+      '<div class="btn-row" style="margin-top:10px">',
+        '<button class="btn ghost sm" data-action="round-pause">先练到这儿（进度会留着）</button>',
+      '</div>',
       '<p class="tiny" style="text-align:center">', esc(round.note), '</p>',
     ].join('');
   }
@@ -1802,12 +1874,15 @@
         : (round.myHp <= 0 || round.idx + 1 >= round.items.length) ? 'lose' : null;
       toast(correct ? '命中！' : '被反击了，注意看解析');
       syncDate(payload);
+      // 只认这一场：700ms 里要是切了身份、换了回合，就不能把旧的结算弹到新界面上
+      var fight = round;
       setTimeout(function () {
-        if (!round || round.battle !== 'boss') return;
+        if (round !== fight || round.battle !== 'boss' || round.phase !== 'anim') return;
+        if (tab !== 'practice') { round.phase = 'ask'; St.saveRound(round); return; }
         round.phase = 'ask';
         if (over) { finishBoss(over); return; }
         advance();
-        if (!correct) openMirror(last, q);
+        if (!correct && round) openMirror(last, q);   // 最后一题别让解析盖掉结算页
       }, 700);
       return;
     }
@@ -1818,6 +1893,8 @@
     if (comboHit) comboBurst(chain);
     // 一次点击即推进：不再停在「下一块」中转页
     advance();
+    // 这可能已经是最后一题：advance 会开完成页，此时不能再弹解析把它盖掉
+    var stillRunning = !!round;
     // 只有答错才用快照复盘刚才那题；下一块已经在下面等着了
     var msg;
     if (!correct) msg = null;
@@ -1826,11 +1903,9 @@
     else if (gained) msg = '答对了，来了一位新伙伴';
     else msg = '答对了，这道题今天已经算过砖了';
     if (comboHit) msg = '连对 ' + chain + ' 题！伙伴们排成队了';
-    if (!correct) {
-      openMirror(last, q);
-      if (endToast) { toast(endToast); endToast = null; }
-    } else if (endToast) { toast(endToast); endToast = null; }
-    else if (msg) toast(msg);
+    if (!correct && stillRunning) openMirror(last, q);
+    if (endToast) { toast(endToast); endToast = null; }
+    else if (correct && msg) toast(msg);
     syncDate(payload);
   }
 
@@ -1904,6 +1979,29 @@
     submitAnswer();
   }
 
+  // 普通一趟做完给个明确的完成页：做了多少、对多少、下一步能去哪，一目了然
+  function openFinishSheet(run, isRedo) {
+    var right = run.results.filter(function (r) { return r.correct; }).length;
+    var total = run.results.length;
+    var pct = total ? Math.round(right / total * 100) : 0;
+    overlay([
+      '<h2>这一趟做完了</h2>',
+      '<div class="prep-stats">',
+        '<span><b>', right, '/', total, '</b><i>答对</i></span>',
+        '<span><b>', pct, '%</b><i>正确率</i></span>',
+        '<span><b>', total - right, '</b><i>再看一眼</i></span>',
+      '</div>',
+      '<p class="muted">结果已经记在首页，随时可以回看。</p>',
+      '<div class="btn-row col" style="margin-top:12px">',
+        isRedo ? '<button class="btn primary wide" data-action="close-overlay">回到错题集</button>'
+               : '<button class="btn primary wide" data-action="close-overlay">好的</button>',
+        '<button class="btn wide" data-action="again">再做一趟（同样范围）</button>',
+        run.mode === 'exam' || run.mode === 'topic'
+          ? '<button class="btn wide" data-action="run-report">看这次的分析</button>' : '',
+      '</div>',
+    ].join(''), { back: false });
+  }
+
   function advance() {
     // BOSS 战：血量先分胜负，题目只是攻击机会；血尽即结算，不写平常的结果条。
     if (round.battle === 'boss') {
@@ -1917,14 +2015,13 @@
       // 训练场不判输赢，做完直接给准备度报告
       if (round.training) { finishTraining(); return; }
       // 订正完回错题集，且不覆盖当天真实成绩的那条结果
-      if (round.isRedo) tab = 'wrong';
-      else {
-        // 结算完不留「完成页」：把结果记一条，直接回首页重新选
-        St.setLastRun({
-          label: round.label, mode: round.mode, spec: round.spec || {}, note: round.note || '',
-          results: round.results.slice(), at: St.todayKey(),
-        });
-      }
+      var wasRedo = !!round.isRedo;
+      var finished = {
+        label: round.label, mode: round.mode, spec: round.spec || {}, note: round.note || '',
+        results: round.results.slice(), at: St.todayKey(),
+      };
+      if (wasRedo) tab = 'wrong';
+      else St.setLastRun(finished);
       if (round.challenge) {
         stopChallengeTimer();
         var firstBadge = St.markChallenge();
@@ -1932,11 +2029,15 @@
       }
       round = null;
       St.clearRound();
-    } else {
-      round.idx += 1; round.selected = null; round.phase = 'ask';
-      round.fillInput = ''; round.orderPicks = [];
-      St.saveRound(round);
+      render();
+      window.scrollTo(0, 0);
+      if (endToast) { toast(endToast); endToast = null; }
+      else openFinishSheet(finished, wasRedo);
+      return;
     }
+    round.idx += 1; round.selected = null; round.phase = 'ask';
+    round.fillInput = ''; round.orderPicks = [];
+    St.saveRound(round);
     render();
     window.scrollTo(0, 0);
   }
@@ -2157,8 +2258,16 @@
       case 'rename-save': {
         var rv = (document.getElementById('rename-input') || {}).value || '';
         if (!rv.trim()) { toast('名字不能为空，请重新输入'); break; }
-        await St.renameProfile(rv, renameTargetId);
-        renderMe(); render(); toast('昵称已更新');
+        var doRename = async function () {
+          await St.renameProfile(rv, renameTargetId);
+          renderMe(); render(); toast('昵称已更新');
+        };
+        var oldName = (St.profileList().filter(function (x) { return x.id === renameTargetId; })[0] || {}).name || '';
+        if (oldName === St.giftOwner() && rv.trim() !== oldName) {
+          confirmSheet('确定改掉管理员昵称？',
+            '云端礼物库只认「' + oldName + '」这个名字。改名后就不能再放礼物或删礼物了；' +
+            '改回这个名字即可恢复权限。已有的礼物仍会照常掉落。', '仍要改名', doRename);
+        } else await doRename();
         break;
       }
       case 'confirm-cancel':
@@ -2216,12 +2325,13 @@
       case 'go-home': {
         // 一层到底：收起弹层 + 回练习首页，历史也退回根，别留下要走两次的空层
         closeOverlayRaw();
+        overlayStack.length = 0;
         tab = 'practice';
         render();
         if (history.state && history.state.overlay) {
-          navSelfBack += 1;
-          try { history.back(); } catch (e) { navSelfBack -= 1; }
-        }
+          navSelfBack += 1; homeStateFix = true;
+          try { history.back(); } catch (e) { navSelfBack -= 1; homeStateFix = false; }
+        } else navReplace();
         window.scrollTo(0, 0);
         break;
       }
@@ -2230,6 +2340,7 @@
           '分解换碎片', function () {
             var r = St.sellLoot(d.uid);
             toast(r.ok ? '分解成 ' + r.gain + ' 块碎片，现有 ' + r.total + ' 块' : (r.reason || '没分成'));
+            if (r.ok) syncGiftChange();
             // 已经在礼物那一页就地重绘，不动历史（确认框刚退过一层，别再叠）
             if (tab === 'gift') render();
             else openGiftBag();
@@ -2241,6 +2352,7 @@
             var r = St.buyGift(d.id);
             if (r.ok) toast('换到了「' + r.gift.name + '」，还剩 ' + r.left + ' 块碎片');
             else toast(r.reason || '没换成');
+            if (r.ok) syncGiftChange();
             openShardShop();
           });
         break;
@@ -2289,6 +2401,14 @@
         break;
       }
       case 'drop-round': stopChallengeTimer(); round = null; St.clearRound(); render(); toast('已放弃这一趟'); break;
+      case 'round-pause':
+        if (!round) { render(); break; }
+        confirmSheet('先练到这儿？', '这一趟的进度会放进首页的「未完成 · 待办」，回来点「接着做完」就行。',
+          '保存并退出', function () {
+            stopChallengeTimer(); St.saveRound(round); round = null; render();
+            toast('进度已留着，首页可以接着做'); window.scrollTo(0, 0);
+          });
+        break;
       case 'start-past': startRound({ mode: 'past', count: 6, grade: Number(d.grade) || 0 }); break;
       case 'start-mode':
         startRound({ mode: d.mode, count: d.mode === 'full' ? 10 : 8,
@@ -2401,7 +2521,9 @@
           await refreshCloudList(false); render(); renderMe(); toast('进度已从云端刷新');
         };
         if (!isFreshProfile(S())) {
-          confirmSheet('用云端进度覆盖本机？', '本机当前记录会被云端最新一份替换。', '覆盖并刷新', runPull);
+          confirmSheet('用云端进度覆盖本机？',
+            '本机当前的错题、进度、碎片和战利品，都会被云端这一份整份替换；这份云端存档是 ' +
+            dateOf(pulled[0]) + ' 的。', '覆盖并刷新', runPull);
         } else await runPull();
         break;
       }
@@ -2415,6 +2537,18 @@
         });
         break;
     }
+  }
+
+  async function applyBookChange(g, term) {
+    var oldBook = (window.YW_BOOK_OF || function () { return null; })(S().grade, S().term);
+    await St.setGrade(g, term);
+    var newBook = (window.YW_BOOK_OF || function () { return null; })(Number(g), term);
+    if (newBook && (!oldBook || newBook.id !== oldBook.id)) {
+      await St.setProgress(1, (newBook.units[0].lessons[0] || {}).n || 0);
+    }
+    render();
+    toast(newBook ? ('已切到 ' + newBook.edition + '，旧内容自动进回忆录')
+                  : ('已切到 ' + g + ' 年级' + term + '册，这一册题库还在准备中'));
   }
 
   document.addEventListener('click', function (e) {
@@ -2431,16 +2565,16 @@
     if (t.id === 'grade-select' || t.id === 'term-select') {
       var g = document.getElementById('grade-select').value;
       var term = document.getElementById('term-select').value;
-      var oldBook = (window.YW_BOOK_OF || function () { return null; })(S().grade, S().term);
-      await St.setGrade(g, term);
-      var newBook = (window.YW_BOOK_OF || function () { return null; })(Number(g), term);
-      // 换册后把进度重置到新册第一单元，避免沿用旧册的课号
-      if (newBook && (!oldBook || newBook.id !== oldBook.id)) {
-        await St.setProgress(1, (newBook.units[0].lessons[0] || {}).n || 0);
+      // 下拉一改就重置进度太容易误触：先确认，说清「旧内容进回忆录、新册从第 1 课开始」
+      if (Number(g) !== Number(S().grade) || term !== S().term) {
+        confirmSheet('换到 ' + g + ' 年级' + term + '册？',
+          '当前册的进度会从第 1 课重新开始；学过的题和错题自动进回忆录，不会丢。',
+          '确认换册', async function () {
+            await applyBookChange(g, term);
+          });
+        render();   // 把下拉框还原回当前册，等确认后再切
+        return;
       }
-      render();
-      toast(newBook ? ('已切到 ' + newBook.edition + '，旧内容自动进回忆录')
-                    : ('已切到 ' + g + ' 年级' + term + '册，这一册题库还在准备中'));
     } else if (t.id === 'progress-unit') {
       var pu = Number(t.value);
       var puObj = window.YW_UNITS.filter(function (x) { return x.id === pu; })[0];

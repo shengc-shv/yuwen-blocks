@@ -868,3 +868,24 @@ body.is-guest .sync-bar { color: var(--amber-d); }
   font-size: 11px; color: var(--ink-2); }
 .loot-row .lr-meta em { font-style: normal; }
 .loot-row .sell-btn { margin-top: 2px; }
+
+/* ================= 触摸目标统一放大：小朋友手指没那么准 =================
+ * 原来顶栏昵称只有 14px 高、结果条 × 只有 34px，错题筛选 36px，
+ * 这些都要抬到 44px 上下，避免「点了没反应」的挫败感。
+ */
+.who-btn { min-height: 44px; padding: 6px 10px; font-size: 13px;
+  border: 2px solid var(--line); background: var(--card); display: inline-flex; align-items: center;
+  max-width: 210px; text-decoration: none; }
+.who-btn:active { background: var(--grass-l); }
+.run-x { width: 44px; height: 44px; }
+.filters button, .grade-row button, .kp-grid button, .scope-grid button { min-height: 44px; }
+.profile-card .p-mini { min-height: 40px; min-width: 44px; }
+.arena-quit { min-height: 44px; font-size: 13px; }
+.btn.sm { min-height: 44px; }
+.sheet-back, .sheet-home { min-height: 44px; }
+.sell-btn { font-size: 12px !important; min-height: 40px; }
+
+/* 游客第一屏的入口卡：最显眼的位置，别让人到处找「取昵称」 */
+.guest-welcome { border-color: var(--amber-d); background: #fff8e4; }
+.guest-welcome h2 { font-size: 18px; margin: 6px 0 4px; }
+.guest-welcome .btn { margin-top: 10px; }
