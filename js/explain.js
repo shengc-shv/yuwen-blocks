@@ -182,6 +182,24 @@
     unknown: '这个知识点还不熟，不急。做完去「专项复习」按这个知识点再练几道，连对 2 次就能毕业。',
   };
 
+  // 精写解析优先：按题目 id 逐题写的错项理由；没写到的题仍走模板，绝不空着
+  function detailed(q) {
+    var D = window.YW_EXPLAIN_DETAIL;
+    if (!D || !D[q.id]) return null;
+    var d = D[q.id], wrongWhy = {};
+    q.options.forEach(function (o, i) {
+      if (i !== q.answer) wrongWhy[o] = (d.wrong && d.wrong[o]) || d.right;
+    });
+    return {
+      point: d.point || (KITS[kitFor(q).point] || {}).point || '',
+      right: d.right || q.tip || '',
+      method: d.method || '',
+      check: CHECK,
+      wrongWhy: wrongWhy,
+      detailed: true,
+    };
+  }
+
   function build(q) {
     var kit = kitFor(q);
     var ex = {
@@ -198,7 +216,7 @@
   }
 
   function of(q) {
-    if (!q.explain) q.explain = build(q);
+    if (!q.explain) q.explain = detailed(q) || build(q);
     return q.explain;
   }
 

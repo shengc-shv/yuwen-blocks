@@ -1807,18 +1807,12 @@
       '<div class="ex-check">', esc(ex.check), '</div>',
     ].join('');
   }
-  function diagnose(type) {
-    return '<div class="ex-diagnose"><span class="badge">' + esc(typeName(type)) +
-           '</span><p>' + esc(window.YWExplain.coach(type)) + '</p></div>';
-  }
-
   function openMirror(last, q) {
     var sel = last.selected, ans = q.answer, src = sourceOf(q);
     var focusTip = (q.focus || []).filter(Boolean).slice(0, 3);
     overlay([
       '<h2>巡查镜 · 这块没挖对</h2>',
       '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
-      diagnose(last.type),
       '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
       '<div class="mirror-pick">你选了 <b>', 'ABCD'[sel], '. ', esc(q.options[sel]),
         '</b>　正确的是 <b>', 'ABCD'[ans], '. ', esc(q.options[ans]), '</b></div>',
@@ -1834,7 +1828,6 @@
     overlay([
       '<h2>这道错题，再看一遍</h2>',
       '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
-      diagnose(type),
       '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
       '<div class="mirror-pick">正确的是 <b>', 'ABCD'[q.answer], '. ', esc(q.options[q.answer]), '</b>' +
         (sel >= 0 ? '　上次选了 <b>' + 'ABCD'[sel] + '. ' + esc(q.options[sel]) + '</b>' : '') + '</div>',
