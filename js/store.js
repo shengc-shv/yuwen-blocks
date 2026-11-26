@@ -55,8 +55,9 @@
       name: name || '学习者',
       spaceId: '',
       grade: 3, term: '上',
-      progress: { unit: 5, lesson: 15 },
-      digUnit: 5, digLesson: 15,
+      // 新档案从第 1 课开始：有了「一课一关」，一上来就跳到第 15 课等于把闸门让开了
+      progress: { unit: 1, lesson: 1 },
+      digUnit: 1, digLesson: 1,
       pendingRound: null,
       examScope: { midterm: [1, 2, 3, 4], final: [1, 2, 3, 4, 5, 6, 7, 8] },
       blocks: 0, level: 1, streak: 0, lastActiveDate: null,
@@ -77,6 +78,8 @@
       league: null,
       attempts: [], kpHistory: {}, wrong: {}, daily: {},
       saves: {}, pendingSync: [],
+      // 一课一关的过关记录，键是「册次:课号」
+      gates: {},
     };
   }
 
@@ -451,6 +454,8 @@
     // 老存档的战利品没有 uid，启动就补齐，否则分解按钮不会出现
     if (!guest) ensureLootIds();
     syncBookContext();
+    // 已经在学后面的孩子：把之前的课按已通关补齐，别被闸门挡在门外
+    if (!guest) seedGates();
     await persist();
     return S;
   }
@@ -807,8 +812,14 @@
     pool = tierPool(pool, league, n);
     if (!pool.length) return [];
     if (!league || league === 'normal') {
-      var base = pool.filter(function (q) { return inDims(q, LEAGUE_DIMS.normal); });
-      var used = {}; base.forEach(function (q) { used[q.id] = 1; });
+      // 普通档优先「认字读词」这类地基：LEAGUE_DIMS.normal 后来把阅读/修辞也纳进来了，
+      // 用它当偏好等于没偏好，普通 boss 里基础题会被理解题挤到一半以下。
+      var CORE = ['pinyin', 'zici', 'beisong', 'ciyu', 'xingjinzi', 'duoyinzi', 'yicuoyin'];
+      var base = pool.filter(function (q) {
+        return CORE.indexOf(q.dim) >= 0 || CORE.indexOf(q.kp) >= 0;
+      });
+      var used = {};
+      base.forEach(function (q) { used[q.id] = 1; });
       return rank(base, recent).concat(rank(pool.filter(function (q) { return !used[q.id]; }), recent)).slice(0, n);
     }
     if (league === 'nightmare') {
@@ -911,6 +922,28 @@
            : spec.league === 'nightmare' ? '噩梦 · 句子阅读方法加量，基础穿插'
            : spec.dim ? ((window.YW_DIMS[spec.dim] || {}).label || '所选维度')
            : spec.kp ? ((window.YW_KP[spec.kp] || {}).label || '所选知识点') : '基础字词句';
+    } else if (mode === 'lesson') {
+      // 本课闯关：三类题按固定配比各抽几道，一趟把三道关一起考掉，
+      // 比「分三关各点一次」少三次进出，孩子更容易接受。
+      // 已经过掉的关不再重复出题——只补还差的那几关，否则孩子要陪着做一遍已经会的东西。
+      var lu = Number(spec.unit), ll = Number(spec.lesson);
+      label = '第 ' + ll + ' 课 · 过关';
+      var lp = all.filter(function (q) { return q.unit === lu && q.lesson === ll; });
+      var wPool = lp.filter(function (q) { return !q.recite && !q.passage; });
+      var bPool = lp.filter(function (q) { return !!q.recite; });
+      var rPool = lp.filter(function (q) { return !!q.passage; });
+      var gt = gateOf(ll);
+      var parts = [], missName = [];
+      if (!gt.w) { parts.push(rank(wPool).slice(0, 3)); missName.push('字词'); }
+      if (!gt.b) { parts.push(rank(bPool).slice(0, 2)); missName.push('背诵'); }
+      if (!gt.r) { parts.push(rank(rPool).slice(0, 3)); missName.push('阅读'); }
+      if (!parts.length) {
+        // 三关都过了还来闯：当复测，三类全考一遍
+        parts = [rank(wPool).slice(0, 3), rank(bPool).slice(0, 2), rank(rPool).slice(0, 3)];
+        missName = ['字词', '背诵', '阅读'];
+      }
+      picked = [].concat.apply([], parts);
+      note = '这一趟考' + missName.join('、') + '，到线就算过关';
     } else if (mode === 'exam') {
       var ex = window.YW_EXAM[spec.examKey || 'midterm'];
       label = spec.training ? '训练场 · ' + ex.label
@@ -991,14 +1024,26 @@
       if (!q || uniq[q.id]) return;
       uniq[q.id] = 1;
       var review = isWrong(q.id);
-      var want = (mode === 'daily' && !review && outUsed < 2) ? outKind(q) : null;
+      // 背诵题一律要真的写出来，不给四选一——选择题蒙对不等于背下来。
+      // 日常练习仍然受「全天两道打字题」的限制，闯关是刻意练，不占这个额度。
+      var want = null;
+      if (mode === 'lesson') {
+        // 闯关是刻意练：背诵题一律要写出来，不给四选一蒙对的机会
+        want = (q.recite && q.fill) ? 'fill' : (!review && outUsed < 2 ? outKind(q) : null);
+      } else if (!review && mode === 'daily' && outUsed < 2) {
+        // 日常仍守「一趟最多两道打字题」：背诵题有 fill 字段，outKind 自然会判成填空
+        want = outKind(q);
+      } else if (review && q.recite && q.fill && outUsed < 2) {
+        // 错过的背诵题再回来时也得写，变成四选一就白复习了
+        want = 'fill';
+      }
       // 同一趟里同一种输出题只保留一道：随机撞型的第二道降级为普通选择题，
-      // 免得孩子连着做两道「挑错字」以为是卡住了。
-      var kind = (want && !kindSeen[want]) ? want : null;
+      // 免得孩子连着做两道「挑错字」以为是卡住了。闯关模式例外——两道背诵题就该都填空。
+      var kind = (want && (mode === 'lesson' || !kindSeen[want])) ? want : null;
       if (kind) {
         outUsed++; kindSeen[kind] = 1;
-        if (kind === 'fill') { typedUsed++; S.fillDay.n++; }
-        if (S.fillDay.kinds.indexOf(kind) < 0) S.fillDay.kinds.push(kind);
+        if (kind === 'fill' && mode !== 'lesson') { typedUsed++; S.fillDay.n++; }
+        if (mode !== 'lesson' && S.fillDay.kinds.indexOf(kind) < 0) S.fillDay.kinds.push(kind);
       }
       items.push({ q: q, isReview: review, outKind: kind || '' });
     });
@@ -1041,6 +1086,7 @@
     root.activeId = id;
     S = root.profiles[id];
     guest = false;
+    seedGates();     // 换到别人的档案也补一次，别让老进度被闸门挡住
     await persist();
     return S;
   }
@@ -1553,6 +1599,8 @@
     S.lastRun = r ? {
       label: r.label || '练习', mode: r.mode || 'daily', spec: r.spec || {},
       note: r.note || '', at: r.at || todayKey(),
+      // 闯关的三关结果要跟着结果条一起留着，否则回到首页就看不到这课过没过
+      gate: r.gate || null,
       results: (r.results || []).map(function (x) {
         return { qid: x.qid, correct: !!x.correct, type: x.type || '' };
       }),
@@ -1567,8 +1615,102 @@
   }
   function setProgress(u, l) {
     var unit = validUnit(u) ? Number(u) : 1;
-    S.progress = { unit: unit, lesson: normalizeLesson(unit, l, false) };
+    var les = normalizeLesson(unit, l, false);
+    // 闸门在这里也要生效：否则直接改下拉就能跳到第 8 单元，绕开一课一关
+    if (!(S.progress && S.progress.unit === unit && S.progress.lesson === les) && !lessonUnlocked(les)) {
+      throw new Error('先过前面那几课，这一课才会打开');
+    }
+    S.progress = { unit: unit, lesson: les };
     return persist();
+  }
+
+  /* ---------- 一课一关 ----------
+   * 为什么要有闸门：题目再多，只要允许自由跳，孩子就一定只刷自己会的课。
+   * 每课设三道关——字词、背诵、阅读，三类都到线才算这课通了，才解锁下一课。
+   *
+   * 判定口径：
+   *   · 一趟里按题目类别分三桶（recite → 背诵，passage → 阅读，其余 → 字词）
+   *   · 每桶要过 ceil(题数 × 2/3) 题：3 题对 2、2 题对 2、1 题对 1
+   *   · 只升不降——这次没过不收回已经拿到的关（遗忘由错题复习队列兜底），
+   *     否则孩子一次手滑就把进度打回去，会直接不想玩
+   * 键带册次前缀，避免三上第 1 课和三下第 1 课串在一起。
+   */
+  function bookIdNow() {
+    var b = window.YW_BOOK_OF ? window.YW_BOOK_OF(S.grade, S.term) : null;
+    return b ? b.id : 'g3s1';
+  }
+  function lessonSeq() {
+    var b = window.YW_BOOK_OF ? window.YW_BOOK_OF(S.grade, S.term) : null;
+    var units = (b && b.units) || window.YW_UNITS || [];
+    var seq = [];
+    units.forEach(function (u) {
+      (u.lessons || []).forEach(function (l) { seq.push({ unit: u.id, lesson: l.n, title: l.t }); });
+    });
+    return seq;
+  }
+  function gateKey(lesson) { return bookIdNow() + ':' + Number(lesson); }
+  function gateOf(lesson) {
+    var g = (S.gates || {})[gateKey(lesson)] || null;
+    return {
+      w: !!(g && g.w), b: !!(g && g.b), r: !!(g && g.r),
+      all: !!(g && g.w && g.b && g.r), at: (g && g.at) || '',
+    };
+  }
+  // 结算时用：按类别分桶算这一趟每关过没过
+  function gateResultOf(results) {
+    var b = { w: { t: 0, ok: 0 }, b: { t: 0, ok: 0 }, r: { t: 0, ok: 0 } };
+    (results || []).forEach(function (x) {
+      var q = window.YW_Q_BY_ID[x.qid];
+      if (!q) return;
+      var k = q.recite ? 'b' : (q.passage ? 'r' : 'w');
+      b[k].t += 1;
+      if (x.correct) b[k].ok += 1;
+    });
+    var out = {};
+    Object.keys(b).forEach(function (k) {
+      var o = b[k];
+      out[k] = { total: o.t, ok: o.ok, pass: o.t > 0 && o.ok >= Math.ceil(o.t * 2 / 3) };
+    });
+    return out;
+  }
+  function saveGate(lesson, res) {
+    if (!res) return Promise.resolve();
+    S.gates = S.gates || {};
+    var k = gateKey(lesson);
+    var cur = S.gates[k] || { w: 0, b: 0, r: 0 };
+    ['w', 'b', 'r'].forEach(function (x) {
+      if (!res[x]) return;
+      if (res[x].pass) cur[x] = 1;
+      // 这一课本来就没有这类题（比如某课没编阅读题），不能拿它当关卡把人永久锁死
+      else if (!res[x].total) cur[x] = 1;
+    });
+    cur.at = todayKey();
+    S.gates[k] = cur;
+    return persist();
+  }
+  // 顺序解锁：本课之前每一课都要三关全通，本课才开
+  function lessonUnlocked(lesson) {
+    var seq = lessonSeq();
+    var at = -1;
+    for (var i = 0; i < seq.length; i++) { if (seq[i].lesson === Number(lesson)) { at = i; break; } }
+    if (at <= 0) return true;
+    for (var j = 0; j < at; j++) { if (!gateOf(seq[j].lesson).all) return false; }
+    return true;
+  }
+  // 老档案兼容：一开始就没有 gates 记录、但进度已经推到后面的孩子，
+  // 把当前课之前的课全部按「已通关」处理，不能把人一夜之间锁在门外。
+  function seedGates() {
+    if (S.gates && Object.keys(S.gates).length) return;
+    var cur = Number(S.progress.lesson) || 0;
+    if (cur <= 1) return;
+    // 一次题都没做过的是全新档案，不能把 1..cur 白送成「已通关」——那闸门就形同虚设
+    var practiced = (S.attempts && S.attempts.length) || (S.blocks > 0) ||
+                    Object.keys(S.wrong || {}).length;
+    if (!practiced) return;
+    S.gates = S.gates || {};
+    lessonSeq().forEach(function (s) {
+      if (s.lesson < cur) S.gates[gateKey(s.lesson)] = { w: 1, b: 1, r: 1, at: todayKey(), seeded: 1 };
+    });
   }
 
   function exportAll() {
@@ -1614,6 +1756,9 @@
     profileId: function () { return S.id; }, profileName: function () { return S.name; },
     setSpaceId: function (code) { S.spaceId = String(code || '').trim(); return persist(); },
     setProgress: setProgress,
+    // 一课一关
+    gateOf: gateOf, gateResultOf: gateResultOf, saveGate: saveGate,
+    lessonUnlocked: lessonUnlocked, lessonSeq: lessonSeq,
     setGrade: function (g, t) { S.grade = Number(g); S.term = t || S.term; syncBookContext(); return persist(); },
     setExamScope: function (key, units) { S.examScope[key] = units; return persist(); },
     addPrize: addPrize, removePrize: removePrize, winBoss: winBoss,

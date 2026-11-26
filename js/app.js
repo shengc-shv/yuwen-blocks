@@ -1151,6 +1151,7 @@
           '<button class="run-x" data-action="run-dismiss" aria-label="收起这条结果" type="button">×</button>',
         '</div>',
         '<h3>', esc(run.label), '　', rs.length, ' 题 · 对 ', ok, '</h3>',
+        run.gate ? gateChips(run.gate) : '',
         '<div class="run-mobs">', mobs, '</div>',
         '<p class="muted">', detail, '</p>',
         '<div class="btn-row" style="margin-top:10px">',
@@ -1582,11 +1583,43 @@
     });
 
     var guest = St.isGuest();
+
+    // 下一关：一课一关的主入口就摆在首页。
+    // 藏进地图页等于没有——主路径要一眼看见，孩子才知道「还有一关没过」。
+    var gateCard = '';
+    if (!guest) {
+      var seq = St.lessonSeq(), target = null;
+      for (var gi = 0; gi < seq.length; gi++) {
+        if (!St.gateOf(seq[gi].lesson).all) { target = seq[gi]; break; }
+      }
+      if (target) {
+        var tg = St.gateOf(target.lesson);
+        var missName = { w: '字词', b: '背诵', r: '阅读' };
+        var miss = ['w', 'b', 'r'].filter(function (k) { return !tg[k]; })
+          .map(function (k) { return missName[k]; });
+        var got = ['w', 'b', 'r'].filter(function (k) { return tg[k]; }).length;
+        gateCard = [
+          '<div class="card">',
+            '<span class="q-meta">下一关 · 第 ', target.unit, ' 单元 · 已过 ', got, '/3 关</span>',
+            '<h3>第 ', target.lesson, ' 课 · ', esc(target.title), '</h3>',
+            '<p class="muted" style="margin:4px 0 8px">还差 ',
+              miss.length === 3 ? '字词、背诵、阅读' : miss.join('、'),
+              '。一趟八题，三类都到线这一课才算过。</p>',
+            '<div class="btn-row">',
+              '<button class="btn primary" data-action="lesson-run" data-unit="', target.unit,
+                '" data-lesson="', target.lesson, '">开始闯关</button>',
+              '<button class="btn ghost" data-action="go-map">看整条路线</button>',
+            '</div>',
+          '</div>',
+        ].join('');
+      }
+    }
     view.innerHTML = [
       guest ? guestWelcome() : '',
       '<div class="section-title"><h2>字块大陆</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
       runCard(s.lastRun),
       todo,
+      gateCard,
       '<div class="card continent-card">',
         '<div class="rank-line"><span class="rank-badge">', esc(rk.name), '</span>',
           '<span class="tiny">经验 ', rk.xp, rk.next ? ' · 再 ' + rk.toNext + ' 升 ' + esc(rk.next.name) : ' · 已满级',
@@ -1666,10 +1699,14 @@
     var useOrder = !!(kind === 'order' && q.order && !fb);
     var answerHtml = opts;
     if (useFill) {
+      // 古诗要填「霜叶红于二月花」这种长答案，长度上限按答案实际字数放宽；
+      // 提示语也跟着题目走（几个字），不要一律说「写一个字就行」。
+      var fillMax = Math.max(6, String((q.fill.accepts || [''])[0] || '').length + 2);
+      var fillHint = q.fill.hint ? ('空里该写什么？' + q.fill.hint) : '空里该写什么？';
       answerHtml = [
         '<div class="fill-box">',
-          '<label class="tiny" for="fill-input">空里该写什么？写一个字就行</label>',
-          '<input id="fill-input" class="fill-input" type="text" maxlength="6" autocomplete="off"',
+          '<label class="tiny" for="fill-input">', esc(fillHint), '</label>',
+          '<input id="fill-input" class="fill-input" type="text" maxlength="', fillMax, '" autocomplete="off"',
             ' value="', esc(round.fillInput || ''), '" placeholder="在这里写" />',
           '<div class="btn-row" style="margin-top:10px">',
             '<button type="button" class="btn primary" data-action="fill-submit">写好啦，提交</button>',
@@ -1980,10 +2017,47 @@
   }
 
   // 普通一趟做完给个明确的完成页：做了多少、对多少、下一步能去哪，一目了然
+  // 一课一关的三枚徽章：绿=已过关，红=这一趟没过，灰=这课没有这类题
+  function gateChips(gate) {
+    if (!gate || !gate.res) return '';
+    var r = gate.res, a = gate.after || {};
+    var NAME = { w: '字词', b: '背诵', r: '阅读' };
+    var chips = ['w', 'b', 'r'].map(function (k) {
+      var x = r[k] || { total: 0, ok: 0, pass: false };
+      // 无题的关先判灰，不能因为「这课没编这类题」就显示成通关或未通关
+      var cls = !x.total ? 'u' : (a[k] ? 'ok' : '');
+      var txt = x.total ? (NAME[k] + ' ' + x.ok + '/' + x.total) : (NAME[k] + ' 这课没有');
+      return '<span class="badge ' + cls + '" style="margin-right:5px">' + txt + '</span>';
+    }).join('');
+    var allPass = !!(a.w && a.b && a.r);
+    var miss = ['w', 'b', 'r'].filter(function (k) { return !a[k]; }).map(function (k) { return NAME[k]; });
+    var line = allPass
+      ? '<p class="tiny" style="color:var(--grass-dd);margin:6px 0 10px">三关全过，这一课通了，下一课已经解锁。</p>'
+      : '<p class="tiny" style="margin:6px 0 10px">还差 ' + miss.join('、') + ' 关。再闯一趟就行，题目会换一批。</p>';
+    return '<div style="margin:10px 0">' + chips + '</div>' + line;
+  }
+
   function openFinishSheet(run, isRedo) {
     var right = run.results.filter(function (r) { return r.correct; }).length;
     var total = run.results.length;
     var pct = total ? Math.round(right / total * 100) : 0;
+    // 闯关不是「做完就好」：先给三关结论，再说对了几题
+    if (run.gate) {
+      overlay([
+        '<h2>第 ', run.gate.lesson, ' 课 · 过关结果</h2>',
+        gateChips(run.gate),
+        '<div class="prep-stats">',
+          '<span><b>', right, '/', total, '</b><i>答对</i></span>',
+          '<span><b>', pct, '%</b><i>正确率</i></span>',
+          '<span><b>', total - right, '</b><i>再看一眼</i></span>',
+        '</div>',
+        '<div class="btn-row col" style="margin-top:12px">',
+          '<button class="btn primary wide" data-action="close-overlay">好的</button>',
+          '<button class="btn wide" data-action="again">再闯一趟</button>',
+        '</div>',
+      ].join(''), { back: false });
+      return;
+    }
     overlay([
       '<h2>这一趟做完了</h2>',
       '<div class="prep-stats">',
@@ -2020,6 +2094,13 @@
         label: round.label, mode: round.mode, spec: round.spec || {}, note: round.note || '',
         results: round.results.slice(), at: St.todayKey(),
       };
+      // 闯关：结算这一刻就把三关算出来存下，过关就顺手解锁下一课
+      if (round.mode === 'lesson' && !wasRedo) {
+        var gres = St.gateResultOf(finished.results);
+        St.saveGate(round.spec.lesson, gres);
+        var after = St.gateOf(round.spec.lesson);
+        finished.gate = { lesson: round.spec.lesson, res: gres, after: after };
+      }
       if (wasRedo) tab = 'wrong';
       else St.setLastRun(finished);
       if (round.challenge) {
@@ -2165,12 +2246,34 @@
       return '<option value="' + u.id + '"' + (s.progress.unit === u.id ? ' selected' : '') + '>第 ' + u.id + ' 单元 · ' + esc(u.name) + '</option>';
     }).join('');
     var cur = window.YW_UNITS.filter(function (u) { return u.id === s.progress.unit; })[0] || window.YW_UNITS[0];
+    // 课文列表 = 闯关路径：三枚圆点分别代表字词、背诵、阅读，全亮才算这一课通了
+    function gateDot(on) {
+      return '<i style="display:block;width:9px;height:9px;border-radius:50%;box-sizing:border-box;' +
+             (on ? 'background:var(--grass-dd)' : 'border:1px solid var(--ink-3);background:transparent') + '"></i>';
+    }
+    var passedInUnit = 0;
     var lessons = cur.lessons.map(function (l) {
-      return '<div class="lesson-line' + (s.progress.lesson === l.n ? ' now' : '') + '"><span class="n">第 ' + l.n + ' 课</span><span>' + esc(l.t) + '</span></div>';
+      var g = St.gateOf(l.n);
+      var open = St.lessonUnlocked(l.n);
+      if (g.all) passedInUnit += 1;
+      return '<div class="lesson-line' + (s.progress.lesson === l.n ? ' now' : '') + '"' +
+             (open ? '' : ' style="opacity:.55"') + '>' +
+        '<span class="n">第 ' + l.n + ' 课</span>' +
+        '<span>' + esc(l.t) + '</span>' +
+        '<span style="margin-left:auto;display:flex;gap:4px;align-items:center;flex:none">' +
+          gateDot(g.w) + gateDot(g.b) + gateDot(g.r) +
+        '</span>' +
+        (open
+          ? '<button class="btn sm" style="flex:none;min-height:30px;padding:2px 10px;font-size:12px" data-action="lesson-run" data-unit="' + cur.id + '" data-lesson="' + l.n + '">' +
+            (g.all ? '再闯' : '闯关') + '</button>'
+          : '<span class="tiny" style="flex:none;color:var(--ink-3)">未解锁</span>') +
+        '</div>';
     }).join('');
     var lessonSel = cur.lessons.map(function (l) {
+      var open = St.lessonUnlocked(l.n);
       return '<option value="' + l.n + '"' + (s.progress.lesson === l.n ? ' selected' : '') +
-             '>第 ' + l.n + ' 课 · ' + esc(l.t) + '</option>';
+             (open ? '' : ' disabled') +
+             '>第 ' + l.n + ' 课 · ' + esc(l.t) + (open ? '' : '（未解锁）') + '</option>';
     }).join('');
     view.innerHTML = [
       '<div class="section-title"><h2>字块大陆地图</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
@@ -2179,7 +2282,9 @@
         '<label class="field"><span>课文</span><select id="progress-lesson">', lessonSel, '</select></label>',
         '<p class="tiny">日常练习只出当前进度及之前的题目；到「回忆录」可以练更早的年级。</p>',
       '</div>',
-      '<div class="card"><h3>第 ', s.progress.unit, ' 单元课文</h3>', lessons, '</div>',
+      '<div class="card"><h3>第 ', s.progress.unit, ' 单元课文 · 已通关 ', passedInUnit, '/', cur.lessons.length, '</h3>',
+        '<p class="tiny" style="margin:0 0 8px">三枚圆点 = 字词 / 背诵 / 阅读。三个都亮才算这一课过关，才会解锁下一课。</p>',
+        lessons, '</div>',
       '<div class="unit-grid">', cards, '</div>',
     ].join('');
   }
@@ -2424,6 +2529,10 @@
         break;
       }
       case 'start-exam': startRound({ mode: 'exam', examKey: d.key }); break;
+      case 'lesson-run':
+        startRound({ mode: 'lesson', unit: Number(d.unit), lesson: Number(d.lesson) });
+        break;
+      case 'go-map': tab = 'map'; render(); window.scrollTo(0, 0); break;
       case 'opt':
         if (!round || round.phase !== 'ask') break;
         round.selected = Number(d.idx); St.saveRound(round); render();

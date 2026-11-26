@@ -225,6 +225,25 @@
     return { point: e.point, method: e.method, right: e.right };
   }
 
+  // 背诵题（按课文内容填空）不逐题写精写库，直接用题目自带的 tip——
+  // 它在编写时就写清了「为什么是这个词、容易和什么记混」，比通用模板有信息量。
+  // 补进精写库，保证每道题都有精写解析，不会掉到兜底话术上去。
+  (function patchReciteExplain() {
+    var D = window.YW_EXPLAIN_DETAIL;
+    if (!D) return;
+    (window.YW_QUESTIONS || []).forEach(function (q) {
+      if (!q.recite || D[q.id] || !q.tip) return;
+      D[q.id] = {
+        right: q.tip,
+        wrong: {},
+        point: '按课文内容填空',
+        method: q.fill
+          ? '先在心里把整句默一遍，再写那个词；写完读一遍，通不通。'
+          : '回想这句话在课文里的上下文，别只凭意思猜。',
+      };
+    });
+  })();
+
   window.YW_QUESTIONS.forEach(function (q) { of(q); });
   window.YWExplain = {
     of: of, brief: brief,
