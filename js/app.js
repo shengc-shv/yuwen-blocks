@@ -253,9 +253,11 @@
   var navSelfBack = 0;   // 我们自己 back() 的计数器，用来和手势后退区分
   var overlayStack = []; // 确认框盖住的底层面板 HTML（每盖一层存一条，取消时原样还回去）
   var homeStateFix = false;
+  var navHold = 0;       // 自己正在改历史：这期间的重绘不要顺手再改一次
+  var navFixState = null; // 自己 back() 落地后，把落点那条记录改写成当前视图
 
   function navState() {
-    return { tab: tab, overlay: histHasOverlay(), od: overlayStack.length };
+    return { tab: tab, overlay: histHasOverlay(), od: overlayStack.length, round: !!round };
   }
   // 进入新的一层（开弹层用）
   function navPush() {
@@ -268,6 +270,35 @@
   function histHasOverlay() { return !!document.getElementById('yw-overlay'); }
   function closeOverlayRaw() { var o = document.getElementById('yw-overlay'); if (o) o.remove(); }
 
+  // 每次重绘后对齐历史。规则只有三条：
+  //   进入答题页 → 压一层（关键：没有这一层，手机上左滑是「跨文档返回」，
+  //                popstate 里再 pushState 也拦不住，应用会被直接退掉）
+  //   答题结束   → 把这一层退掉，history 里不留空的答题层
+  //   其余（切 tab、重绘）→ 同级替换，不累积
+  function syncNav() {
+    if (navHold > 0) return;
+    var st = history.state || {};
+    if (round && !st.round) {
+      if (st.overlay || histHasOverlay()) {
+        // 从弹层里开一趟：弹层那层直接改写成答题层，不叠两层
+        closeOverlayRaw(); overlayStack.length = 0; navReplace();
+      } else navPush();
+      return;
+    }
+    if (!round && st.round) {
+      navHold += 1; navSelfBack += 1;
+      navFixState = { tab: tab, overlay: false, od: 0, round: false };
+      try { history.back(); } catch (e) {
+        navHold -= 1; navSelfBack -= 1; navFixState = null; navReplace();
+      }
+      return;
+    }
+    // 从首页出去（看地图、礼物袋、错题、回忆录）：压一层，左滑能回到首页；
+    // tab 之间互相切换：同级替换，不累积，不用沿途一个个退
+    if ((st.tab || 'practice') === 'practice' && tab !== 'practice') navPush();
+    else navReplace();
+  }
+
   // 手势后退：按目标 state 把界面还原回去（这就是「退一层」）
   function applyNavState(st) {
     st = st || { tab: 'practice', overlay: false, od: 0 };
@@ -279,24 +310,26 @@
     render();
   }
   window.addEventListener('popstate', function (ev) {
+    // 自己触发的返回：界面已由调用方处理好，这里只收尾并校正落点那条历史
+    if (navSelfBack > 0) {
+      navSelfBack -= 1; navHold = 0;
+      if (navFixState) {
+        try { history.replaceState(navFixState, ''); } catch (e) {}
+        navFixState = null;
+      } else if (homeStateFix) {
+        homeStateFix = false;
+        try { history.replaceState({ tab: 'practice', overlay: false, od: 0, round: false }, ''); } catch (e) {}
+      }
+      return;
+    }
     // 答题中手势左滑：不静默切走，把历史补回去并问一句；进度留在待办，随时能接着做
-    if (round && round.phase !== 'done' && navSelfBack === 0) {
+    if (round && round.phase !== 'done') {
       try { history.pushState(navState(), ''); } catch (e) {}
       confirmSheet('这趟还没做完', '现在离开会把进度放进「未完成 · 待办」，回来还能接着做。',
         '结束这一趟并回首页', function () {
           St.saveRound(round); round = null; tab = 'practice'; render(); window.scrollTo(0, 0);
         });
       return;
-    }
-    if (navSelfBack > 0) {
-      navSelfBack -= 1;
-      // 「首页」走了 history.back()，等它落地后把当前条改写成真正的首页，
-      // 否则历史里还留着旧 tab，下一次左滑会把人跳回去。
-      if (homeStateFix) {
-        homeStateFix = false;
-        try { history.replaceState({ tab: 'practice', overlay: false, od: 0 }, ''); } catch (e) {}
-      }
-      return;   // 自己触发的，界面已由调用方处理好
     }
     applyNavState(ev.state);
   });
@@ -466,9 +499,14 @@
 
   async function boot() {
     try {
-      // 先给自己占一条「根」历史：有了它，手势后退才有东西可退，
-      // 不会一滑就把整个应用退掉。
-      try { history.replaceState({ tab: tab, overlay: false }, ''); } catch (e) {}
+      // 先给自己占一条「根」历史，再垫一条同文档的副本：
+      // 只占一条根是不够的——那一条就是最底层，左滑直接跨文档返回，应用会被退掉。
+      // 垫了副本之后，任何一次后退都先落在同文档记录上，popstate 能接住。
+      try {
+        var seed = { tab: tab, overlay: false, od: 0, round: false };
+        history.replaceState(seed, '');
+        history.pushState({ tab: tab, overlay: false, od: 0, round: false }, '');
+      } catch (e) {}
       await St.init();
       Cl.init();
       St.setNoAnim(S().noAnim);
@@ -521,6 +559,7 @@
     else if (tab === 'map') renderMap();
     else if (tab === 'wrong') renderWrong();
     else renderPractice();
+    syncNav();
   }
 
   /* ---------------- 身份：你以什么身份登录 ---------------- */
@@ -879,9 +918,7 @@
     closeOverlayRaw();           // 只摘 DOM，历史交给下面统一处理
     overlayStack.length = 0;
     tab = 'gift';
-    render();
-    if (had) navReplace();       // 本来就在一条弹层历史里，改写成礼物页，不叠加
-    else navPush();              // 从别处进来：压一层，左滑能回去
+    render();                    // syncNav 已经把当前这条历史改写成礼物页，不再额外压层
     window.scrollTo(0, 0);
   }
 
@@ -1114,7 +1151,8 @@
     };
     tab = 'practice';
     St.saveRound(round);
-    closeOverlay();
+    // 这里不能走 closeOverlay()：它内部是 history.back()，异步的，
+    // 会和紧接着压答题层抢顺序，落到一半历史就错位了。改由 syncNav 统一改写这一层。
     render();
     if (round.challenge) startChallengeTimer();
     window.scrollTo(0, 0);
@@ -1263,7 +1301,9 @@
       coach: 'read', layer: coachLayer,
       fillMode: 'fill', fillInput: '', orderPicks: [],
     };
-    tab = 'practice'; St.saveRound(round); closeOverlay(); render();
+    tab = 'practice'; St.saveRound(round);
+    // 同 startRound：不开 history.back()（异步会和压层抢顺序），交给 syncNav 改写这一层
+    render();
     window.scrollTo(0, 0);
   }
 
@@ -1323,7 +1363,9 @@
             picked: null, fb: null, typed: '', stats: { ok: 0, all: 0, dictOk: 0, dict: 0 } },
     };
     cwBuildStep();
-    tab = 'practice'; St.saveRound(round); closeOverlay(); render();
+    tab = 'practice'; St.saveRound(round);
+    // 同 startRound：不开 history.back()（异步会和压层抢顺序），交给 syncNav 改写这一层
+    render();
     window.scrollTo(0, 0);
   }
 
@@ -2548,15 +2590,17 @@
       case 'shard-shop': openShardShop(); break;
       case 'gift-bag': openGiftBag(); break;
       case 'go-home': {
-        // 一层到底：收起弹层 + 回练习首页，历史也退回根，别留下要走两次的空层
+        // 一层到底：收起弹层 + 回练习首页，历史也退回上一层，别留下要走两次的空层。
+        // 注意要在重绘前先记下「当前这条是不是弹层」，重绘时 syncNav 会把 state 改掉。
+        var wasOverlay = !!(history.state && history.state.overlay);
         closeOverlayRaw();
         overlayStack.length = 0;
         tab = 'practice';
         render();
-        if (history.state && history.state.overlay) {
+        if (wasOverlay) {
           navSelfBack += 1; homeStateFix = true;
           try { history.back(); } catch (e) { navSelfBack -= 1; homeStateFix = false; }
-        } else navReplace();
+        }
         window.scrollTo(0, 0);
         break;
       }
@@ -2841,13 +2885,11 @@
       if (St.isGuest()) { tab = 'practice'; return; }
       var next = b.dataset.tab;
       if (next === tab && !histHasOverlay()) return;
-      var fromHome = tab === 'practice' && !histHasOverlay();
-      closeOverlay();          // 有弹层就先退掉这一层（含历史）
+      // 关弹层不走 closeOverlay()：里面的 history.back() 是异步的，
+      // 会跟紧跟着的重绘改历史抢顺序。这里只摘 DOM，历史交给 syncNav 统一改写。
+      if (histHasOverlay()) { closeOverlayRaw(); overlayStack.length = 0; }
       tab = next;
-      render();
-      // 从首页进别的 tab 压一层：回来时先落回首页，不直接退出应用。
-      // tab 之间切换用 replace，不累积历史，不用沿途把点过的 tab 一个个退回来。
-      if (fromHome && next !== 'practice') navPush(); else navReplace();
+      render();      // syncNav 负责：切 tab 是同级替换，不累积历史
       window.scrollTo(0, 0);
     });
   });
