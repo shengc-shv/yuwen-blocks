@@ -735,9 +735,14 @@
     var w = S.wrong[qid];
     return !!(w && !w.graduated);
   }
-  function rank(pool) {
+  // 最近做过的题加惩罚分，让它排到后面——同一只 boss 反复打才不会总撞同样的题。
+  // 惩罚只影响抽题顺序，不碰掌握度、计分和错题。
+  function rank(pool, recent) {
+    var avoid = {};
+    if (recent) (recent || []).forEach(function (id) { avoid[id] = 1; });
     return pool.map(function (q) {
-      return { q: q, score: masteryOf(q.kp) + Math.random() * 40 };
+      var penalty = avoid[q.id] ? 60 : 0;
+      return { q: q, score: masteryOf(q.kp) + Math.random() * 40 + penalty };
     }).sort(function (a, b) { return a.score - b.score; })
       .map(function (x) { return x.q; });
   }
@@ -764,14 +769,24 @@
   // 三档题库差异化：普通=基础维度，噩梦=理解应用维度为主、基础穿插，地狱=跨单元混错题与薄弱点。
   // 只是选题策略不同，判定、计分、错题、掌握度全部沿用原口径。
   var LEAGUE_DIMS = {
-    normal: ['pinyin', 'zici', 'beisong', 'ciyu', 'xingjinzi', 'duoyinzi', 'yicuoyin', 'gushi'],
+    // 普通档也放句子/阅读/修辞：只练字词的话，孩子打到通关也没碰到真正的理解题。
+    normal: ['pinyin', 'zici', 'beisong', 'ciyu', 'xingjinzi', 'duoyinzi', 'yicuoyin', 'gushi',
+             'yuedu', 'gaini', 'xiuci', 'biaodian', 'deDiDe', 'xinxi', 'qinggan'],
     nightmare: ['juzi', 'yuedu', 'changshi', 'bingju', 'biaodian', 'deDiDe',
-                'lijie', 'wenyan', 'guancha', 'ciyu'],
+                'lijie', 'wenyan', 'guancha', 'ciyu', 'gaini', 'qishi', 'renwu', 'xiuci'],
   };
   function inDims(q, dims) { return dims.indexOf(q.dim) >= 0 || dims.indexOf(q.kp) >= 0; }
   // 题库分档：普通只用原有基础题；噩梦/地狱以扩展能力题为主，掺入基础题防止断层。
   function tierPool(pool, league, n) {
-    if (!league || league === 'normal') return pool.filter(function (q) { return !q.tier; });
+    // 普通档也要掺难题：原来把带 tier 的题全排除，孩子打普通 boss 永远只见到基础题。
+    // 现在普通档按 7:3 混基础与提高题，疆梦/地狱仍以各自 tier 为主。
+    if (!league || league === 'normal') {
+      var plain0 = pool.filter(function (q) { return !q.tier; });
+      var hard0 = pool.filter(function (q) { return !!q.tier; });
+      var wantHard0 = Math.min(hard0.length, Math.max(1, Math.round((n || 6) * 0.3)));
+      return rank(plain0).slice(0, Math.max(0, (n || plain0.length) - wantHard0))
+        .concat(rank(hard0).slice(0, wantHard0));
+    }
     var main = league === 'hell' ? 'hell' : 'nightmare';
     var primary = pool.filter(function (q) { return q.tier === main; });
     var secondary = pool.filter(function (q) { return q.tier && q.tier !== main; });
@@ -787,21 +802,21 @@
     }
     return out.slice(0, n);
   }
-  function leaguePick(pool, league, n) {
+  function leaguePick(pool, league, n, recent) {
     n = n || pool.length;
     pool = tierPool(pool, league, n);
     if (!pool.length) return [];
     if (!league || league === 'normal') {
       var base = pool.filter(function (q) { return inDims(q, LEAGUE_DIMS.normal); });
       var used = {}; base.forEach(function (q) { used[q.id] = 1; });
-      return rank(base).concat(rank(pool.filter(function (q) { return !used[q.id]; }))).slice(0, n);
+      return rank(base, recent).concat(rank(pool.filter(function (q) { return !used[q.id]; }), recent)).slice(0, n);
     }
     if (league === 'nightmare') {
-      var deep = rank(pool.filter(function (q) { return inDims(q, LEAGUE_DIMS.nightmare); }));
+      var deep = rank(pool.filter(function (q) { return inDims(q, LEAGUE_DIMS.nightmare); }), recent);
       var seen = {};
       pool.filter(function (q) { return inDims(q, LEAGUE_DIMS.nightmare); })
           .forEach(function (q) { seen[q.id] = 1; });
-      var rest = rank(pool.filter(function (q) { return !seen[q.id]; }));
+      var rest = rank(pool.filter(function (q) { return !seen[q.id]; }), recent);
       var out = [];
       while (out.length < n && (deep.length || rest.length)) {
         if (deep.length && out.length < n) out.push(deep.shift());
@@ -812,9 +827,9 @@
     }
     var ids = Object.keys(S.wrong).filter(isWrong);
     var wrongQ = rank(ids.map(function (id) { return window.YW_Q_BY_ID[id]; })
-      .filter(function (q) { return q && pool.indexOf(q) >= 0; }));
+      .filter(function (q) { return q && pool.indexOf(q) >= 0; }), recent);
     var s1 = {}; wrongQ.forEach(function (q) { s1[q.id] = 1; });
-    var weak = rank(pool.filter(function (q) { return !s1[q.id] && masteryOf(q.kp) < 60; }));
+    var weak = rank(pool.filter(function (q) { return !s1[q.id] && masteryOf(q.kp) < 60; }), recent);
     var s2 = {}; weak.forEach(function (q) { s2[q.id] = 1; });
     var other = pool.filter(function (q) { return !s1[q.id] && !s2[q.id]; });
     return wrongQ.concat(weak, balanced(other, Math.max(0, n - wrongQ.length - weak.length))).slice(0, n);
@@ -890,7 +905,8 @@
                  (!spec.kp || q.kp === spec.kp) && (!spec.dim || q.dim === spec.dim);
         });
       }
-      picked = leaguePick(tp, spec.league, n);
+      var recentIds = spec.bossKey ? (leagueState().recent[spec.league + ':' + spec.bossKey] || []) : [];
+      picked = leaguePick(tp, spec.league, n, recentIds);
       note = spec.league === 'hell' ? '地狱 · 跨单元混合 + 错题/薄弱点'
            : spec.league === 'nightmare' ? '噩梦 · 句子阅读方法加量，基础穿插'
            : spec.dim ? ((window.YW_DIMS[spec.dim] || {}).label || '所选维度')
@@ -903,7 +919,8 @@
       var epool = spec.league === 'hell'
         ? window.YW_currentQuestions(S.grade, S.term)
         : window.YW_currentQuestions(S.grade, S.term, units);
-      picked = leaguePick(epool, spec.league, spec.count || ex.count);
+      var examRecent = spec.bossKey ? (leagueState().recent[spec.league + ':' + spec.bossKey] || []) : [];
+      picked = leaguePick(epool, spec.league, spec.count || ex.count, examRecent);
       note = (spec.league === 'hell' ? '地狱 · 全册随机 + 错题薄弱' : ex.desc) +
              ' · 当前范围：第 ' + (spec.league === 'hell' ? '1–' + (S.progress.unit || 8) : units.join('、')) + ' 单元';
     }
@@ -985,7 +1002,16 @@
       }
       items.push({ q: q, isReview: review, outKind: kind || '' });
     });
-    if (outUsed) persist();
+    // 记下这一趟的题目，下次打同一个 boss 时这些题会被降权（训练场不记，免得占用正式池）
+    if (spec.bossKey && !spec.training) {
+      var rk = spec.league + ':' + spec.bossKey;
+      var LR = leagueState();
+      var last = (LR.recent[rk] || []).slice();
+      items.forEach(function (it) { last = last.filter(function (id) { return id !== it.q.id; }); });
+      items.forEach(function (it) { last.push(it.q.id); });
+      LR.recent[rk] = last.slice(-Math.max(n * 2, 12));
+    }
+    if (outUsed || spec.bossKey) persist();
     return { mode: mode, label: label, note: note, items: items, count: items.length };
   }
 
@@ -1196,6 +1222,7 @@
     L.unlocked = L.unlocked || { normal: true, nightmare: false, hell: false };
     L.tickets = L.tickets || { normal: 5, nightmare: 3, hell: 1 };
     L.conquest = L.conquest || {}; L.train = L.train || {};
+    L.recent = L.recent || {};   // 每只 boss 最近出过的题，抽题时降权，避免反复撞同一批
     // 老存档迁移：旧版准备度的键是「u1」这种裸 bossKey，归到普通难度，别让孩子白练
     Object.keys(L.train).forEach(function (k) {
       if (k.indexOf(':') >= 0) return;
@@ -1311,10 +1338,12 @@
     orange: { key: 'orange', label: '传说', color: '#ffa53d', ink: '#3f2100', pct: '' },
   };
   // 每个难度档位的掉落权重（合计 100）
+  // 传说要真的稀有：原来小boss 3% + 满血翻倍，打完三档 36 次几乎必出传说（96.6%）。
+  // 现在降一档权重，并限制满血重掷不能产出传说（见 rollTier），让传说成为惊喜而非常态。
   var GIFT_WEIGHTS = {
-    small: { white: 60, green: 26, purple: 11, orange: 3 },
-    mid:   { white: 40, green: 30, purple: 22, orange: 8 },
-    big:   { white: 24, green: 30, purple: 30, orange: 16 },
+    small: { white: 64, green: 27, purple: 8.5, orange: 0.5 },
+    mid:   { white: 46, green: 33, purple: 19,  orange: 2 },
+    big:   { white: 32, green: 36, purple: 27,  orange: 5 },
   };
   function bossTierOf(key) {
     return key === 'final' ? 'big' : (key === 'midterm' ? 'mid' : 'small');
@@ -1358,12 +1387,15 @@
       acc += w[GIFT_TIERS[i]];
       if (r < acc) { tier = GIFT_TIERS[i]; break; }
     }
-    // 满血通关（luck）重掷一次取更好的那档，奖励打得干净的
+    // 满血通关（luck）重掷一次取更好的那档，奖励打得干净的。
+    // 但重掷只在白/绿/紫里进行：不能靠「打得干净」把传说刷出来，传说只能靠第一次那一抽。
     if (luck) {
-      var r2 = Math.random() * total, acc2 = 0, t2 = GIFT_TIERS[0];
-      for (i = 0; i < GIFT_TIERS.length; i++) {
+      var luckTotal = total - (w.orange || 0);
+      var r2 = Math.random() * luckTotal, acc2 = 0, t2 = GIFT_TIERS[0];
+      for (i = 0; i < GIFT_TIERS.length - 1; i++) {
         acc2 += w[GIFT_TIERS[i]];
         if (r2 < acc2) { t2 = GIFT_TIERS[i]; break; }
+        if (i === GIFT_TIERS.length - 2) t2 = GIFT_TIERS[i];
       }
       if (GIFT_TIERS.indexOf(t2) > GIFT_TIERS.indexOf(tier)) tier = t2;
     }

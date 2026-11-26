@@ -889,3 +889,13 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .guest-welcome { border-color: var(--amber-d); background: #fff8e4; }
 .guest-welcome h2 { font-size: 18px; margin: 6px 0 4px; }
 .guest-welcome .btn { margin-top: 10px; }
+
+/* 真阅读题的短文材料框：和题目明确分开，孩子知道要先读这段文字再作答 */
+.q-passage { position: relative; padding: 12px 12px 10px; margin: 2px 0 8px;
+  background: var(--paper-2); border: 3px solid var(--dirt-d); line-height: 1.75; font-size: 14px; }
+.passage-tag { display: inline-block; margin-right: 6px; padding: 0 6px; font-size: 11px;
+  font-weight: 700; color: #fff; background: var(--dirt); vertical-align: 1px; }
+
+/* 短文和设问之间留一点呼吸，避免看成一整块 */
+.q-passage { margin: 8px 0 14px; }
+.q-passage + .q-stem { margin-top: 0; padding-top: 10px; border-top: 2px dashed var(--line); }

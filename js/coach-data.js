@@ -45,6 +45,27 @@
     });
   }
 
+  // 默写要写整个词，就得给出整个词的拼音；原来只显示生字拼音，孩子无从推出另一个字。
+  // 这里按「词语」补上整词读音（含轻声），只用于默写提示，不改原有单字拼音与判定。
+  var WORD_PY = {
+    '大坝':'dà bà', '早晨':'zǎo chén', '笛子':'dí zi', '荒野':'huāng yě',
+    '背诵':'bèi sòng', '戒尺':'jiè chǐ', '石径':'shí jìng', '霜叶':'shuāng yè',
+    '水洼':'shuǐ wā', '雨靴':'yǔ xuē', '钥匙':'yào shi', '缤纷':'bīn fēn',
+    '抖动':'dǒu dòng', '歌韵':'gē yùn', '暴风雨':'bào fēng yǔ', '偶尔':'ǒu ěr',
+    '犟脾气':'jiàng pí qi', '邀请':'yāo qǐng', '模仿':'mó fǎng', '陌生':'mò shēng',
+    '葫芦':'hú lu', '秘密':'mì mì', '旅行':'lǚ xíng', '细嚼慢咽':'xì jiáo màn yàn',
+    '奶酪':'nǎi lào', '诱人':'yòu rén', '翠鸟':'cuì niǎo', '衔着':'xián zhe',
+    '蒲公英':'pú gōng yīng', '合拢':'hé lǒng', '富饶':'fù ráo', '海参':'hǎi shēn',
+    '海滨':'hǎi bīn', '栽树':'zāi shù', '沉浸':'chén jìn', '献出':'xiàn chū',
+    '璀璨':'cuǐ càn', '贸易':'mào yì', '鹿柴':'lù zhài', '潋滟':'liàn yàn',
+    '演奏':'yǎn zòu', '呢喃':'ní nán', '蚂蚱':'mà zha', '凉爽':'liáng shuǎng',
+    '水瓮':'shuǐ wèng', '皆是':'jiē shì', '成绩':'chéng jì', '瞧见':'qiáo jiàn',
+    '镇定':'zhèn dìng', '争夺':'zhēng duó', '粗瓷':'cū cí', '水缸':'shuǐ gāng',
+  };
+  WORDS.forEach(function (w) {
+    w.wordPy = WORD_PY[w.word] || w.py;   // 表里没有就退回单字拼音，绝不编造
+  });
+
   window.YW_COACH_WORDS = WORDS;
   window.YW_COACH_LAYERS = READ_LAYERS;
   window.YW_COACH_READING = readingQuestions;

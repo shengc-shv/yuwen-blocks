@@ -1443,19 +1443,20 @@
       var flags = fb && fb.flags ? fb.flags : null;
       body = [
         '<div class="cw-dict">',
-          '<div class="cw-py">', esc(w.py), '</div>',
+          '<div class="cw-py">', esc(w.wordPy || w.py), '</div>',
           fb
             ? '<div class="cw-char-row">' + w.word.split('').map(function (ch, i) {
                 var good = flags ? flags[i] : true;
                 return '<span class="cw-char ' + (good ? 'ok' : 'bad') + '">' + esc(ch) + '</span>';
               }).join('') + '</div>'
-            : '<p class="tiny">按拼音把词写出来，写错也没关系，正好记下错哪个字。</p>',
+            : '<p class="tiny">这是整个词的拼音，写出 ' + ['零','一','二','三','四'][w.word.length] +
+              ' 个字；写错也没关系，正好记下错哪个字。</p>',
           fb
             ? '<p class="tiny">' + (fb.ok ? '全对！这个字你记住了。'
                 : '错的字：' + (fb.wrongChars || []).map(function (x) { return '「' + x + '」'; }).join('') +
                   '　已经记进错字本，明天还会来找你。') + '</p>'
             : '<div class="cw-input-row">' +
-                '<input id="cw-input" class="cw-input" maxlength="6" autocomplete="off" ' +
+                '<input id="cw-input" class="cw-input" maxlength="' + (w.word.length + 2) + '" autocomplete="off" ' +
                   'value="', esc(c.typed || ''), '" placeholder="在这里写" />' +
                 '<button class="btn primary" data-action="cw-dict">写好了</button>' +
               '</div>',
@@ -1776,6 +1777,8 @@
       '<div class="card">',
         '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
         '<span class="q-meta">', esc(dimName(q.dim)), ' · ', esc(kpName(q.kp)), '</span>',
+        q.passage ? '<div class="q-passage"><span class="passage-tag">读一读</span>' +
+          esc(q.passage).split('\n').join('<br/>') + '</div>' : '',
         '<div class="q-stem">', esc(q.stem), '</div>',
         answerHtml,
         useFill ? '' : '<div class="action-bar">' +
@@ -1813,6 +1816,8 @@
     overlay([
       '<h2>巡查镜 · 这块没挖对</h2>',
       '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
+      q.passage ? '<div class="q-passage"><span class="passage-tag">读一读</span>' +
+        esc(q.passage).split('\n').join('<br/>') + '</div>' : '',
       '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
       '<div class="mirror-pick">你选了 <b>', 'ABCD'[sel], '. ', esc(q.options[sel]),
         '</b>　正确的是 <b>', 'ABCD'[ans], '. ', esc(q.options[ans]), '</b></div>',
@@ -1828,6 +1833,8 @@
     overlay([
       '<h2>这道错题，再看一遍</h2>',
       '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
+      q.passage ? '<div class="q-passage"><span class="passage-tag">读一读</span>' +
+        esc(q.passage).split('\n').join('<br/>') + '</div>' : '',
       '<div class="mirror-stem">', highlight(q.stem, q.focus), '</div>',
       '<div class="mirror-pick">正确的是 <b>', 'ABCD'[q.answer], '. ', esc(q.options[q.answer]), '</b>' +
         (sel >= 0 ? '　上次选了 <b>' + 'ABCD'[sel] + '. ' + esc(q.options[sel]) + '</b>' : '') + '</div>',
