@@ -689,6 +689,8 @@
         return {
           unlocked: L.unlocked, conquest: L.conquest, train: L.train,
           xp: L.xp || 0, pity: L.pity || 0,
+          // 轮次也要带走：换台设备接着打，不能把「这一轮已经领过的礼物」又领一遍
+          lap: L.lap, wins: L.wins,
           tickets: L.tickets, combo: L.combo || 0, bonusDay: L.bonusDay || '',
         };
       })(),
@@ -768,6 +770,19 @@
       });
       if (typeof p.league.xp === 'number') L.xp = Math.max(L.xp || 0, p.league.xp);
       if (typeof p.league.pity === 'number') L.pity = Math.max(L.pity || 0, p.league.pity);
+      // 轮次只往前不回头：旧设备的一日快照不能把本机已经进到的下一轮盖回去
+      if (p.league.lap) {
+        LEAGUE_KEYS.forEach(function (k) {
+          var v = Number(p.league.lap[k]) || 0;
+          if (v > (L.lap[k] || 1)) L.lap[k] = v;
+        });
+      }
+      if (p.league.wins) {
+        Object.keys(p.league.wins).forEach(function (key) {
+          var v = Number(p.league.wins[key]) || 0;
+          if (!(key in L.wins) || v > (L.wins[key] || 0)) L.wins[key] = v;
+        });
+      }
       if (p.date === todayKey() && p.league.tickets) {
         L.d = p.date; L.tickets = p.league.tickets;
         L.combo = p.league.combo || 0; L.bonusDay = p.league.bonusDay || '';
@@ -1381,6 +1396,9 @@
       tickets: { normal: 5, nightmare: 3, hell: 1 },
       unlocked: { normal: true, nightmare: false, hell: false },
       conquest: {}, pity: 0, xp: 0, train: {}, combo: 0, bonusDay: '',
+      // 轮次（周目）：一个难度的 10 只 boss 全打赢后整版重置，礼物可以再掉一轮。
+      // lap 记「第几轮」，wins 记「某只 boss 是在哪一轮打赢的」（键：难度:boss）。
+      lap: { normal: 1, nightmare: 1, hell: 1 }, wins: {},
     };
   }
   function leagueState() {
@@ -1396,6 +1414,10 @@
     L.tickets = L.tickets || { normal: 5, nightmare: 3, hell: 1 };
     L.conquest = L.conquest || {}; L.train = L.train || {};
     L.recent = L.recent || {};   // 每只 boss 最近出过的题，抽题时降权，避免反复撞同一批
+    // 轮次：老存档没有 wins 时按「已征服」补一次，避免一夜之间白拿一整套礼物
+    if (!L.wins) migrateLapRounds(L);
+    L.lap = L.lap || {};
+    LEAGUE_KEYS.forEach(function (k) { if (!(L.lap[k] >= 1)) L.lap[k] = 1; });
     // 老存档迁移：旧版准备度的键是「u1」这种裸 bossKey，归到普通难度，别让孩子白练
     Object.keys(L.train).forEach(function (k) {
       if (k.indexOf(':') >= 0) return;
@@ -1463,6 +1485,34 @@
     gainXp(8 * (leagueInfo(league).xpMul) + (first ? 6 : 0));
     persist();
     return { first: first, unlocked: next, bossKey: key };
+  }
+  /* ---------- 轮次（周目）：整版重置 ----------
+   * 一个难度的 10 只 boss 全部打赢，这一轮就通了：lap + 1，10 只重新变成「本轮没打赢」，
+   * 于是又能各掉一次礼物。conquest（永久征服）不动——噩梦/地狱的逐只解锁靠它，
+   * 重置绝不能把「已经征服过」洗掉，否则孩子打了半天的进度会莫名回锁。
+   * 老存档迁移：把已有的 conquest 当作第 1 轮打过的，若第 1 轮已全清则直接开第 2 轮，
+   * 这样不会在一夜之间白送一整套礼物，也算认了老玩家的战绩。
+   */
+  function lapOf(league) { return Math.max(1, leagueState().lap[league] || 1); }
+  function lapDone(league, key) {
+    return (leagueState().wins[league + ':' + key] || 0) === lapOf(league);
+  }
+  function lapState(league) {
+    var lap = lapOf(league), W = leagueState().wins || {}, cleared = 0;
+    BOSS_KEYS.forEach(function (k) { if ((W[league + ':' + k] || 0) === lap) cleared++; });
+    return { lap: lap, cleared: cleared, total: BOSS_KEYS.length, all: cleared >= BOSS_KEYS.length };
+  }
+  function migrateLapRounds(L) {
+    L.wins = {}; L.lap = L.lap || {};
+    LEAGUE_KEYS.forEach(function (lg) {
+      var all = true;
+      BOSS_KEYS.forEach(function (k) {
+        if (L.conquest[lg + ':' + k]) L.wins[lg + ':' + k] = 1;
+        else all = false;
+      });
+      // 全清过的直接进第 2 轮（版面是新的），没全清的老老实实待在第 1 轮继续打
+      L.lap[lg] = all ? 2 : 1;
+    });
   }
   // 训练场：不判胜负、不扣券、不掉礼物；只给准备度、经验和「连对 10 题赢回 1 张券」
   // 准备度按「难度:boss」分开：普通练满分不代表地狱也准备好了。
@@ -1611,28 +1661,44 @@
     var i = S.prizePool.indexOf(name);
     if (i >= 0) { S.prizePool.splice(i, 1); persist(); }
   }
-  // 每个难度各自首次通关才掉落，三档都能拿到一次礼物；重复通关只涨经验。
+  /* 掉落按「轮」算：这一轮第一次打赢它 → 掉一件礼物；同一轮再打只涨经验。
+   * 这一轮 10 只全清 → 整版重置（lap + 1），10 只重新可掉。
+   * 券是每天发，所以一轮大概要分两三天打完，不存在一天刷爆的问题。
+   */
   function winBoss(key, gift, opts) {
     opts = opts || {};
     var league = opts.league || 'normal';
     if (BOSS_KEYS.indexOf(key) < 0) return null;
     S.bossDone = S.bossDone || {};
     S.bossDone[key] = todayKey();
-    var conq = markConquest(league, key);
+    var conq = markConquest(league, key);   // 永久征服：只涨不降，负责解锁下一难度
     var L = leagueState();
     S.loot = S.loot || [];
+    var lapBefore = lapOf(league);
+    var drop = !lapDone(league, key);       // 本轮还没打赢过 → 这次能掉
+    if (drop) L.wins[league + ':' + key] = lapBefore;
     var got = null;
-    if (conq.first && gift && gift.name) {
+    if (drop && gift && gift.name) {
       got = { uid: lootUid(), name: gift.name, tier: gift.tier || 'white', from: key,
               at: todayKey(), league: league };
       S.loot.push(got);
     }
     // 保底计数：只有真正掉到白板才累加，掉了绿以上就清零
-    if (conq.first && got) L.pity = got.tier === 'white' ? (L.pity || 0) + 1 : 0;
+    if (drop && got) L.pity = got.tier === 'white' ? (L.pity || 0) + 1 : 0;
+    // 刚记完这一次，看看这一轮是不是全清了；全清就立刻开下一轮
+    var before = lapState(league), reset = null;
+    if (before.all) {
+      L.lap[league] = lapBefore + 1;
+      reset = { was: lapBefore, now: lapBefore + 1, league: league };
+    }
     persist();
     return {
-      repeat: !conq.first, gift: got, loot: S.loot,
-      noGift: conq.first && !got, conquest: conq, pityLeft: pityLeft(),
+      repeat: !drop, gift: got, loot: S.loot,
+      noGift: drop && !got, conquest: conq, pityLeft: pityLeft(),
+      lap: reset ? reset.now : lapBefore,
+      lapReset: reset,
+      // 重置后返回的是新一轮的进度；没重置时就是刚才这一轮的进度
+      lapProgress: lapState(league),
     };
   }
   /* ---------- 字块碎片：分解战利品 → 攒碎片 → 兑换想要的礼物 ----------
@@ -1694,7 +1760,9 @@
         key: k,
         name: isExam ? (k === 'midterm' ? '墨影将' : '墨影龙')
                      : (window.YW_UNITS.filter(function (u) { return u.id === Number(k.slice(1)); })[0] || {}).name,
-        beaten: isConquered(league, k),
+        beaten: isConquered(league, k),           // 永久征服：解锁下一难度用
+        lapDone: lapDone(league, k),              // 本轮已打赢：决定还能不能再掉礼物
+        lap: lapOf(league),
         unlocked: bossUnlocked(league, k),
         tier: isExam ? (k === 'final' ? '大' : '中') : '小',
       };
@@ -1898,6 +1966,8 @@
     leagueUnlocked: leagueUnlocked, leagueLeft: leagueLeft, spendTicket: spendTicket,
     refundTicket: refundTicket,
     isConquered: isConquered, markConquest: markConquest,
+    // 轮次（周目）：一整版 10 只全清后自动重置，礼物可以再掉一轮
+    lapOf: lapOf, lapDone: lapDone, lapState: lapState,
     bossUnlocked: bossUnlocked, prevBossName: prevBossName,
     coachReadMastery: coachReadMastery, coachWordMastery: coachWordMastery,
     checkDictation: checkDictation, judgeSay: judgeSay, coachRecordReading: coachRecordReading,

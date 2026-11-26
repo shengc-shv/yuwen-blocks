@@ -718,6 +718,7 @@
     // 面板上直接显示「带上弱点加成之后」的血量，免得开打前算不清
     var shown = St.applyWeakBuff(St.bossSpec(key, league), w);
     var left = St.leagueLeft(league), pct = Math.min(100, w.pct);
+    var lapHere = St.lapState(league), lapDoneHere = St.lapDone(league, key);
     overlay([
       '<h2>', esc(BOSS_NAMES[key] || key), ' · ', esc(St.leagueInfo(league).name), '</h2>',
       '<div class="prep-stats">',
@@ -726,6 +727,11 @@
         '<span><b>', spec.count, '</b><i>题量</i></span>',
         '<span><b>', left, '</b><i>今日券</i></span>',
       '</div>',
+      // 开打前就说清楚「这次会不会掉东西」，免得孩子花券打一只已经领过的 boss
+      '<p class="tiny lap-hint">第 ', lapHere.lap, ' 轮 · 本轮已打赢 ', lapHere.cleared, '/',
+        lapHere.total, ' 只 · ',
+        lapDoneHere ? '这只本轮已经领过礼物，再打只涨经验。'
+                    : '本轮第一次打赢它，会掉一件礼物。', '</p>',
       '<div class="weak-box', w.ready ? ' on' : '', '">',
         '<div class="weak-head"><b>弱点 · ', esc(w.label), '</b>',
           '<span>', w.pct, '% / ', w.need, '%</span></div>',
@@ -815,7 +821,7 @@
             ? '解锁了' + esc(St.leagueInfo(result.conquest.unlocked).name) + '难度的同一只 boss！'
             : '图鉴 +1。') + '</p>' : '',
       won && result && result.repeat
-        ? '<p class="tiny">这一档已经打过它了，礼物只领一次；再来涨经验。</p>' : '',
+        ? '<p class="tiny">这一轮已经打赢过它了，礼物一轮只领一次；等整版全清重置，它就又能掉。</p>' : '',
       won && result && result.noGift && !result.repeat
         ? '<p class="tiny">礼物库还空着，让「' + esc(St.giftOwner()) + '」去「我的 → 礼物库」放几件礼物。</p>' : '',
       gt
@@ -825,6 +831,14 @@
             (perfect ? '<span class="tiny">满血通关，多掷了一次</span>' : '') +
             '<span class="tiny">不想要？回大陆分解成 ' + St.shardSell(result.gift.tier) + ' 块碎片</span>' +
           '</div>' : '',
+      won && result && result.lapReset
+        ? '<div class="lap-clear"><b>第 ' + result.lapReset.was + ' 轮全线打通！</b>' +
+            '<span class="tiny">' + esc(St.leagueInfo(league).name) + '这一档的 ' +
+            result.lapProgress.total + ' 只 boss 全部打赢，版面已重置为第 ' + result.lapReset.now +
+            ' 轮 —— 10 只又能各掉一次礼物。</span></div>' : '',
+      won && result && !result.lapReset
+        ? '<p class="tiny">本轮已打赢 ' + result.lapProgress.cleared + ' / ' + result.lapProgress.total +
+            ' 只，全打赢就整版重置，礼物再掉一轮。</p>' : '',
       won ? '<p class="tiny">段位 ' + esc(rk.name) + ' · 经验 ' + rk.xp +
              (result ? ' · 保底再 ' + result.pityLeft + ' 次必出精良' : '') + '</p>' : '',
       !won ? '<div class="soft-land"><b>差 ' + bossLeft + ' 下就打倒了</b>' +
@@ -965,6 +979,8 @@
     var league = ui.league;
     var info = St.leagueInfo(league), unlocked = St.leagueUnlocked(league);
     var rk = St.rankInfo();
+    var lap = St.lapState(league);
+    var lapPct = lap.total ? Math.round(lap.cleared / lap.total * 100) : 0;
     var tabs = St.LEAGUE_KEYS.map(function (k) {
       var L = St.leagueInfo(k), on = St.leagueUnlocked(k);
       return '<button class="league-tab' + (k === league ? ' active' : '') + (on ? '' : ' locked') +
@@ -974,18 +990,23 @@
     var cards = St.bossList(league).map(function (b) {
       var ready = St.trainingReady(b.key, league);
       var w = St.bossWeakInfo(b.key, league);
-      return '<button class="boss-card' + (b.beaten ? ' beaten' : '') +
+      // 卡片状态按「本轮」说：本轮已打赢就没礼物了，等整版重置；
+      // 永久征服过但本轮没打的，标一句「可再掉」，孩子才知道现在还有东西可拿
+      var stateTxt = b.lapDone ? '本轮已打赢'
+        : !b.unlocked ? '先打赢' + (league === 'hell' ? '噩梦' : '普通') + '的它'
+        : b.beaten ? '曾征服 · 本轮可再掉'
+        : '准备度 ' + ready + '%';
+      return '<button class="boss-card' + (b.lapDone ? ' beaten' : '') +
+          (b.beaten && !b.lapDone ? ' lap-old' : '') +
           (b.unlocked ? '' : ' locked') + (w.ready ? ' weak-on' : '') + '" ' +
         'data-action="boss-prep" data-key="' + b.key + '" data-league="' + league + '">' +
         '<svg class="boss-ico"><use href="#' + BOSS_ART[b.key] + '"></use></svg>' +
         '<strong>' + esc(BOSS_NAMES[b.key] || b.name) + '</strong>' +
-        '<span class="tiny">' + b.tier + ' boss · ' +
-          (b.beaten ? '已征服' : b.unlocked ? '准备度 ' + ready + '%' :
-            '先打赢' + (league === 'hell' ? '噩梦' : '普通') + '的它') + '</span>' +
+        '<span class="tiny">' + b.tier + ' boss · ' + stateTxt + '</span>' +
         '<span class="boss-ready"><i style="width:' + ready + '%"></i></span>' +
         '<span class="boss-weak' + (w.ready ? ' on' : '') + '">弱点 ' + esc(w.label) + ' ' +
           w.pct + '%' + (w.ready ? ' ✓' : '') + '</span>' +
-        (b.beaten ? '<span class="boss-flag">✓</span>' : '') +
+        (b.lapDone ? '<span class="boss-flag">✓</span>' : '') +
         (b.unlocked ? '' : '<span class="boss-lock">🔒</span>') +
       '</button>';
     }).join('');
@@ -995,10 +1016,15 @@
       '<div class="league-head"><span class="rank-badge">', esc(rk.name), '</span>',
         '<span class="tiny">经验 ', rk.xp, ' · 保底再 ', St.pityLeft(), ' 次必出精良</span></div>',
       '<div class="league-tabs">', tabs, '</div>',
+      '<div class="lap-line"><span class="lap-pill">第 ', lap.lap, ' 轮</span>',
+        '<span class="tiny">本轮已打赢 ', lap.cleared, ' / ', lap.total, ' 只</span></div>',
+      '<div class="lap-track"><i style="width:', lapPct, '%"></i></div>',
       '<p class="muted">' + esc(info.name) + '：今天还剩 <b>' + St.leagueLeft(league) +
         '</b> 次挑战。' + (league === 'normal' ? '这是起点，随便挑一只打。'
           : '每只 boss 都要先在' + esc(St.leagueInfo(info.unlockAt).name) +
             '打赢同一只才会解锁；带 🔒 的还不能打，可以先去训练场准备。') + '</p>',
+      '<p class="tiny">这一档 ', lap.total, ' 只全打赢，整版就重置成下一轮，10 只又能各掉一次礼物；',
+        '「已征服」是永久记录，重置不会抹掉。</p>',
       '<div class="boss-grid">', cards, '</div>',
       '<div class="btn-row" style="margin-top:12px">',
         '<button class="btn" data-action="training-board" data-league="' + league + '">训练场 · 不扣券</button>',
@@ -1698,6 +1724,14 @@
               (on ? St.leagueLeft(k) + ' 张' : '未解锁') + '</span>';
           }).join(''),
         '</div>',
+        // 轮次进度摆在券下面：孩子能看见「这一轮还剩几只没打」，全清会整版重置
+        '<p class="tiny lap-home">本轮进度：',
+          St.LEAGUE_KEYS.filter(function (k) { return St.leagueUnlocked(k); }).map(function (k) {
+            var ls = St.lapState(k);
+            return esc(St.leagueInfo(k).name) + ' ' + ls.cleared + '/' + ls.total +
+              (ls.lap > 1 ? '（第 ' + ls.lap + ' 轮）' : '');
+          }).join(' · '),
+          '（全清即重置）</p>',
         '<p class="tiny" style="margin-top:8px">今天做过 ', today.attempts, ' 题，一次就对 ', today.correct, ' 题。',
           St.isGuest() ? '游客模式：进度不存，先取个昵称吧。' : '打到一半会自动存成待办。', '</p>',
       '</div>',

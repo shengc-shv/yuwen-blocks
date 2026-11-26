@@ -419,7 +419,22 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .boss-flag { position: absolute; top: 4px; right: 7px; color: var(--grass-dd); font-weight: 700; }
 .boss-card.locked { opacity: .62; background: var(--paper-2); border-style: dashed; }
 .boss-card.locked .boss-ico { filter: grayscale(.7); }
+/* 曾征服但本轮还没打：绿色虚线，表示「这只熟，现在打还能再掉一次」 */
+.boss-card.lap-old { border-color: var(--grass-d); border-style: dashed; }
 .boss-lock { position: absolute; top: 4px; right: 7px; font-size: 13px; }
+/* 轮次（周目）：一个难度 10 只全清后整版重置，礼物可以再掉一轮 */
+.lap-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 10px 0 0; }
+.lap-pill { display: inline-block; padding: 2px 9px; font-size: 12px; font-weight: 700;
+  color: var(--ink); background: var(--card); border: 2px solid var(--ink); border-radius: 9px; }
+.lap-track { height: 9px; margin: 6px 0 10px; background: var(--paper-2); border: 2px solid var(--ink); }
+.lap-track i { display: block; height: 100%; background: linear-gradient(90deg, #9fe08a, #57a447);
+  transition: width .3s ease; }
+.lap-clear { margin-top: 10px; padding: 10px; text-align: center; border: 2px solid var(--ink);
+  background: linear-gradient(180deg, #fff8dd, #ffe9a8); }
+.lap-clear b { display: block; margin-bottom: 3px; font-size: 15px; }
+.lap-clear .tiny { color: var(--ink-2); }
+.lap-hint { margin: 8px 0; }
+.lap-home { margin-top: 6px; }
 .boss-ico { width: 64px; height: 64px; image-rendering: pixelated; }
 .boss-battle { padding: 9px 11px; margin-bottom: 9px; background: var(--paper-2); border: 2px solid var(--dirt-d); }
 .boss-side { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
