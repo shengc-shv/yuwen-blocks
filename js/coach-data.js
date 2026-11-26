@@ -62,8 +62,22 @@
     '水瓮':'shuǐ wèng', '皆是':'jiē shì', '成绩':'chéng jì', '瞧见':'qiáo jiàn',
     '镇定':'zhèn dìng', '争夺':'zhēng duó', '粗瓷':'cū cí', '水缸':'shuǐ gāng',
   };
+  // 每课补的写字表词语：并进来一起练，id 与课内原有词不冲突（冲突的会被过滤掉）
+  (window.YW_EXTRA_WORDS || []).forEach(function (w) {
+    var dup = WORDS.some(function (x) { return x.id === w.id; });
+    if (dup) return;
+    WORDS.push({
+      id: w.id, ch: w.ch, word: w.word, py: w.py, wrong: w.wrong,
+      unit: w.unit, lesson: w.lesson, title: w.title,
+      book: w.book, grade: w.grade, term: w.term,
+      pyw: w.pyw || '',
+    });
+  });
+
   WORDS.forEach(function (w) {
-    w.wordPy = WORD_PY[w.word] || w.py;   // 表里没有就退回单字拼音，绝不编造
+    // 整词拼音优先用词表；表里没有就退回单字拼音——
+    // 但补充词自带 pyw，不会再出现「一个词只显示一个音」的情况
+    w.wordPy = w.pyw || WORD_PY[w.word] || w.py;   // 绝不编造
   });
 
   window.YW_COACH_WORDS = WORDS;

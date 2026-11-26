@@ -1614,12 +1614,30 @@
         ].join('');
       }
     }
+    // 本周回看：一周一次，把「当天做对、过几天就忘」的题捞回来。
+    // 只在练过一定量之后出现，练习太少时抽不出东西，露出来反而添乱。
+    var weekCard = '';
+    if (!guest) {
+      var wk = St.weekRecap();
+      if (!wk.done && wk.pool >= 8) {
+        weekCard = [
+          '<div class="card">',
+            '<span class="q-meta">本周回看 · 一周一次</span>',
+            '<h3>这周练过的 ', wk.pool, ' 道，还记得吗</h3>',
+            '<p class="muted" style="margin:4px 0 8px">抽 ', wk.ids.length,
+              ' 道出来看看。当天做对不难，隔几天还会才算真会。</p>',
+            '<button class="btn primary" data-action="week-run">开始回看</button>',
+          '</div>',
+        ].join('');
+      }
+    }
     view.innerHTML = [
       guest ? guestWelcome() : '',
       '<div class="section-title"><h2>字块大陆</h2><span class="tiny">', esc(window.YW_EDITION), '</span></div>',
       runCard(s.lastRun),
       todo,
       gateCard,
+      weekCard,
       '<div class="card continent-card">',
         '<div class="rank-line"><span class="rank-badge">', esc(rk.name), '</span>',
           '<span class="tiny">经验 ', rk.xp, rk.next ? ' · 再 ' + rk.toNext + ' 升 ' + esc(rk.next.name) : ' · 已满级',
@@ -1680,9 +1698,15 @@
   function renderQuestion() {
     // 动画窗口里离开过：回来时把锁解开，别让孩子对着不能答的题发呆
     if (round.phase === 'anim') { round.phase = 'ask'; St.saveRound(round); }
+    // 计时起点：用来判断这题是「想清楚才选」还是「改来改去碰对的」
+    if (!round.phase || round.phase === 'ask') {
+      if (!round.qStartAt) round.qStartAt = Date.now();
+    }
     var it = round.items[round.idx], q = it.q, fb = round.phase === 'feedback';
     var last = round.results[round.results.length - 1];
     var dots = mobRow(round.items, round.results, round.idx);
+    // 「用一句话说出来」是打字题，没有四个选项，走独立的一套渲染
+    if (q.say) return renderSayView(it, q, fb, dots);
     var opts = q.options.map(function (o, i) {
       var cls = 'opt';
       if (fb) {
@@ -1830,6 +1854,91 @@
     ].join('');
   }
 
+  /* 「用一句话说出来」：读完短文，用自己的话概括。
+   * 选择题只能证明「认得出来」，这一层要的是「想清楚了能讲出来」。
+   * 判定只看关键信息覆盖 + 字数，句式不限；答完给参考说法自己对照。 */
+  function renderSayView(it, q, fb, dots) {
+    var v = round.sayVerdict || null;
+    var src = sourceOf(q);
+    var body;
+    if (!fb) {
+      body = [
+        '<div class="card">',
+          '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
+          '<span class="q-meta">阅读理解 · 说出主要意思</span>',
+          '<div class="q-passage"><span class="passage-tag">读一读</span>',
+            esc(q.passage).split('\n').join('<br/>'), '</div>',
+          '<div class="q-stem">', esc(q.prompt), '</div>',
+          '<div class="say-box">',
+            '<label class="tiny" for="say-input">用你自己的话写一句，至少 ',
+              (q.min || 10), ' 个字</label>',
+            '<textarea id="say-input" class="say-input" rows="3" maxlength="120"',
+              ' placeholder="这段主要写了……">', esc(round.sayInput || ''), '</textarea>',
+            '<p class="tiny">不用跟书上一样，把主要意思说清就行。写完会给你一句参考说法。</p>',
+            '<button class="btn primary wide" data-action="say-submit">写好了</button>',
+          '</div>',
+        '</div>',
+      ].join('');
+    } else {
+      var why;
+      if (v && v.ok) why = '主要意思说到了。';
+      else if (v && !v.longEnough) {
+        why = '只写了 ' + v.len + ' 个字，太短了，再多说一点：谁、做了什么、结果怎样。';
+      } else if (v) {
+        why = '关键信息说到 ' + v.hits + ' 个，还差 ' + (v.need - v.hits) + ' 个。再看看短文里的人或物、做了什么。';
+      } else why = '';
+      body = [
+        '<div class="card">',
+          '<div class="q-source"><b>', esc(src.book), '</b><span>', esc(src.unit), '</span></div>',
+          '<span class="q-meta">阅读理解 · 说出主要意思</span>',
+          '<div class="q-passage"><span class="passage-tag">读一读</span>',
+            esc(q.passage).split('\n').join('<br/>'), '</div>',
+          '<div class="q-stem">', esc(q.prompt), '</div>',
+          '<div class="say-mine"><span class="tiny">你写的是</span><p>',
+            esc(round.sayInput || ''), '</p></div>',
+          '<div class="feedback', (v && v.ok) ? '' : ' bad', '">',
+            '<strong>', (v && v.ok) ? '这一句说清楚了' : '还差一点', '</strong>',
+            '<p>', esc(why), '</p>',
+          '</div>',
+          '<div class="say-ref"><span class="tiny">参考说法（意思到了就行，不用一样）</span><p>',
+            esc(q.ref), '</p></div>',
+          '<button class="btn primary wide" data-action="next">',
+            (round.idx + 1 >= round.items.length) ? '看这趟结果' : '下一题',
+          '</button>',
+        '</div>',
+      ].join('');
+    }
+    view.innerHTML = [
+      '<div class="section-title"><h2>', esc(round.label), '</h2><span class="tiny">',
+        round.idx + 1, ' / ', round.items.length, ' 题</span></div>',
+      '<div class="round-head"><div class="round-dots">', dots, '</div><span class="tiny">说清楚比说漂亮重要</span></div>',
+      body,
+      '<div class="btn-row" style="margin-top:10px">',
+        '<button class="btn ghost sm" data-action="round-pause">先练到这儿（进度会留着）</button>',
+      '</div>',
+      '<p class="tiny" style="text-align:center">', esc(round.note), '</p>',
+    ].join('');
+  }
+
+  function submitSay() {
+    if (!round || round.phase !== 'ask') return;
+    var q = round.items[round.idx].q;
+    var el = document.getElementById('say-input');
+    var raw = el ? el.value.trim() : '';
+    if (!raw) { toast('先写一句试试，写短一点也行'); if (el) el.focus(); return; }
+    var v = St.judgeSay(q, raw);
+    round.sayInput = raw;
+    round.sayVerdict = v;
+    // 计分与其他题一致：达标算对、不达标算没答对，但开放题不进错题集
+    St.recordAnswer(q, -1, v.ok, false, { slow: false, switched: 0 });
+    round.results.push({ qid: q.id, correct: v.ok, type: '', selected: -1 });
+    round.phase = 'feedback';
+    St.gainXp(v.ok ? 2 : 1);
+    St.saveRound(round);
+    render();
+    window.scrollTo(0, 0);
+  }
+
   /* 分层解析块：错因 → 逐项排除 → 正解回扣 → 方法口诀 → 遮住重做 */
   function exBlock(no, title, text, cls) {
     return '<div class="ex-block ' + cls + '"><h4><i>' + no + '</i>' + title +
@@ -1889,7 +1998,11 @@
     var correct = sel === q.answer;
     var type = correct ? '' : St.classify(q, sel);
     var lvBefore = S().level;
-    var payload = St.recordAnswer(q, sel, correct, it.isReview);
+    // 用时与改选次数只用于判断「是不是蒙对的」，不改分数
+    var spentMs = round.qStartAt ? (Date.now() - round.qStartAt) : 0;
+    var slowLimit = (it.outKind === 'fill' || it.asFill) ? 90000 : 45000;
+    var meta = { slow: spentMs > slowLimit, switched: round.switched || 0 };
+    var payload = St.recordAnswer(q, sel, correct, it.isReview, meta);
     // 阅读专项：每答一题就更新那一层的掌握度，弱点进度条当场会动
     if (round.coach === 'read' && round.layer) St.coachRecordReading(round.layer, correct);
     var gained = St.lastGaveBlock();
@@ -2101,6 +2214,8 @@
         var after = St.gateOf(round.spec.lesson);
         finished.gate = { lesson: round.spec.lesson, res: gres, after: after };
       }
+      // 本周回看做完就记下这一周，别在首页反复提醒
+      if (round.mode === 'weekly' && !wasRedo) St.markWeekDone();
       if (wasRedo) tab = 'wrong';
       else St.setLastRun(finished);
       if (round.challenge) {
@@ -2118,6 +2233,8 @@
     }
     round.idx += 1; round.selected = null; round.phase = 'ask';
     round.fillInput = ''; round.orderPicks = [];
+    round.qStartAt = 0; round.switched = 0;
+    round.sayInput = ''; round.sayVerdict = null;
     St.saveRound(round);
     render();
     window.scrollTo(0, 0);
@@ -2158,7 +2275,7 @@
     var pastAll = window.YW_pastQuestions(s.grade, s.term);
     var pastWrong = Object.keys(s.wrong).filter(function (id) {
       var q = window.YW_Q_BY_ID[id], w = s.wrong[id];
-      return q && q.grade < s.grade && !w.graduated;
+      return q && q.grade < s.grade && !w.graduated && !w.light;
     }).length;
     var grades = [];
     for (var g = 1; g < s.grade; g++) grades.push(g);
@@ -2300,6 +2417,9 @@
       return '<button data-action="wrong-filter" data-filter="' + f[0] + '"' + (ui.wrongFilter === f[0] ? ' class="on"' : '') + '>' + f[1] + '</button>';
     }).join('');
     var list = all.filter(function (x) {
+      // 轻量复习条目（做对但明显在猜）不算错题，不放进错题集，
+      // 否则家长打开看到一堆「错题」，一查却没有一道真错，反而失去信任
+      if (x.w.light) return false;
       if (ui.wrongFilter === 'graduated') return !!x.w.graduated;
       if (ui.wrongFilter === 'all') return !x.w.graduated;
       return !x.w.graduated && x.w.type === ui.wrongFilter;
@@ -2532,9 +2652,15 @@
       case 'lesson-run':
         startRound({ mode: 'lesson', unit: Number(d.unit), lesson: Number(d.lesson) });
         break;
+      case 'week-run': startRound({ mode: 'weekly', count: 10 }); break;
+      case 'say-submit': submitSay(); break;
       case 'go-map': tab = 'map'; render(); window.scrollTo(0, 0); break;
       case 'opt':
         if (!round || round.phase !== 'ask') break;
+        // 同一题里换了另一个选项：记为一次犹豫。改两次以上就是明显在试，不是会。
+        if (round.selected !== null && round.selected !== Number(d.idx)) {
+          round.switched = (round.switched || 0) + 1;
+        }
         round.selected = Number(d.idx); St.saveRound(round); render();
         break;
       case 'mirror-back': closeOverlay(); break;

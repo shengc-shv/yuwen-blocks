@@ -80,6 +80,8 @@
       saves: {}, pendingSync: [],
       // 一课一关的过关记录，键是「册次:课号」
       gates: {},
+      // 最近一次做过「本周回看」是哪一周（周一日期做键），一周只提醒一次
+      weekDone: '',
     };
   }
 
@@ -160,6 +162,28 @@
     return { ok: right === chars.length, word: target, flags: flags, right: right,
              total: chars.length, pct: entry.pct, wrongChars: chars.filter(function (c, i) { return !flags[i]; }) };
   }
+  // 「用一句话说出来」：不用语义模型，只看关键词覆盖。
+  // 三年级要求的是说出主要意思，句式怎么写都行，所以只要命中足够多的关键信息、
+  // 字数够（不是「好」「不知道」这种敷衍），就算过；过完给参考答句自己对照。
+  function normSay(s) {
+    return String(s == null ? '' : s)
+      .replace(/[\s\u3000]/g, '')
+      .replace(/[，。！？、：；,.!?:;"'“”‘’（）()《》〈〉…—～~\-]/g, '');
+  }
+  function judgeSay(q, input) {
+    var t = normSay(input);
+    var hits = 0, hitIdx = [], missIdx = [];
+    (q.keys || []).forEach(function (group, i) {
+      var ok = group.some(function (k) { return t.indexOf(normSay(k)) >= 0; });
+      if (ok) { hits += 1; hitIdx.push(i); } else { missIdx.push(i); }
+    });
+    var need = q.need || 2;
+    var min = q.min || 10;
+    var longEnough = t.length >= min;
+    return { ok: longEnough && hits >= need, hits: hits, need: need,
+             longEnough: longEnough, len: t.length, min: min, ref: q.ref || '' };
+  }
+
   function coachRecordReading(layer, correct) {
     var C = coachState();
     var e = C.read[layer] || { h: [] };
@@ -498,7 +522,61 @@
     });
   }
 
-  function recordAnswer(q, selected, correct, isReview) {
+  /* ---------- 本周回看：一周抽一次，专治「当天做对、一周后忘光」 ---------- */
+  // 键取所在周的周一日期，跨周自动换新，不依赖服务器时间。
+  function weekKey(date) {
+    var d = date || todayKey();
+    var parts = String(d).split('-');
+    var dt = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2])));
+    var dow = dt.getUTCDay();                 // 0=周日
+    var back = (dow + 6) % 7;                 // 周一为一周之始
+    dt.setUTCDate(dt.getUTCDate() - back);
+    return dt.toISOString().slice(0, 10);
+  }
+  // 本周做过的题：最近 7 天作答日志去重。
+  // 排序优先级：真错过的最该回看；其次是「只做对过一次、再没被验证」的——
+  // 这类最危险，孩子自己觉得会，其实只是当时记住了。
+  function weekPool() {
+    var today = todayKey();
+    var since = addDays(today, -6);
+    var seenId = {}, okCount = {}, wrongCount = {}, lastDate = {};
+    (S.attempts || []).forEach(function (a) {
+      if (!a || !a.d || a.d < since) return;
+      seenId[a.q] = 1;
+      if (a.ok) okCount[a.q] = (okCount[a.q] || 0) + 1;
+      else wrongCount[a.q] = (wrongCount[a.q] || 0) + 1;
+      if (!lastDate[a.q] || a.d > lastDate[a.q]) lastDate[a.q] = a.d;
+    });
+    return Object.keys(seenId).filter(function (id) { return !!window.YW_Q_BY_ID[id]; })
+      .map(function (id) {
+        return {
+          id: id,
+          wrong: wrongCount[id] || 0,
+          ok: okCount[id] || 0,
+          // 分数越小越靠前：错过一次 -3，只对过一次 +2（没被第二次验证）
+          score: (wrongCount[id] ? -3 * wrongCount[id] : 0) + (okCount[id] <= 1 ? 2 : 0),
+          last: lastDate[id] || '',
+        };
+      });
+  }
+  function weekRecap() {
+    var pool = weekPool();
+    var order = pool.slice().sort(function (a, b) {
+      if (a.score !== b.score) return a.score - b.score;
+      return a.last < b.last ? -1 : (a.last > b.last ? 1 : 0);   // 同一档里先看更早做的
+    });
+    var ids = order.slice(0, 10).map(function (x) { return x.id; })
+      .filter(function (id) { return !!window.YW_Q_BY_ID[id]; });
+    return { done: !!S.weekDone && S.weekDone === weekKey(), pool: pool.length, ids: ids };
+  }
+  function markWeekDone() {
+    S.weekDone = weekKey();
+    return persist();
+  }
+
+  // meta（可选）：{ slow: 用时明显偏长, switched: 中途改过几次选项 }
+  // 用来抓「侥幸做对」——对了不代表会，改三四次、磨了两分钟才蒙对，两天后得再看一眼。
+  function recordAnswer(q, selected, correct, isReview, meta) {
     var t = todayKey();
     var type = correct ? '' : classify(q, selected);
     lastGaveBlock = false;
@@ -544,17 +622,33 @@
     if (isReview && w) {
       if (correct) {
         w.okCount = (w.okCount || 0) + 1;
-        w.stage = Math.min((w.stage || 0) + 1, REVIEW_GAPS.length - 1);
-        w.due = addDays(t, REVIEW_GAPS[w.stage]);
         w.lastDate = t;
-        if (w.okCount >= 2) w.graduated = true;
+        if (w.light) {
+          // 轻量复习只要再对一次就毕业：它本来只是「疑似侥幸」，不是真错题
+          w.graduated = true;
+        } else {
+          w.stage = Math.min((w.stage || 0) + 1, REVIEW_GAPS.length - 1);
+          w.due = addDays(t, REVIEW_GAPS[w.stage]);
+          if (w.okCount >= 2) w.graduated = true;
+        }
       } else {
         w.okCount = 0; w.stage = 0; w.due = addDays(t, 1); w.lastDate = t;
+        // 轻量条目复习时又错了，说明是真没掌握：升级成常规错题，走完整 1/3/7 复习
+        if (w.light) { w.light = 0; w.type = type; countRealWrong(w); }
       }
-    } else if (!correct) {
+    } else if (!correct && !q.say) {
+      // 「用一句话说出来」不进错题队列：开放题没有标准答案，
+      // 写得不全给参考句对照就够了，明天再考同一道没有意义。
       S.wrong[q.id] = w
-        ? Object.assign(w, { type: type, stage: 0, due: addDays(t, 1), okCount: 0, count: (w.count || 0) + 1, graduated: false, lastDate: t })
+        ? Object.assign(w, { type: type, stage: 0, due: addDays(t, 1), okCount: 0, count: (w.count || 0) + 1, graduated: false, light: 0, lastDate: t })
         : { qid: q.id, type: type, stage: 0, due: addDays(t, 1), okCount: 0, count: 1, graduated: false, lastDate: t };
+    } else if (meta && !w && ((meta.switched || 0) >= 2 || (meta.slow && (meta.switched || 0) >= 1))) {
+      // 做对了，但明显在试探：改选两次以上，或者磨了很久还改过。
+      // 不记成错题（错题集只放真错的），只排进两天后的轻量复习，再对一次就消失。
+      S.wrong[q.id] = {
+        qid: q.id, type: '', stage: 0, due: addDays(t, 2), okCount: 0, count: 0,
+        graduated: false, lastDate: t, light: 1, why: (meta.switched || 0) >= 2 ? 'switched' : 'slow',
+      };
     }
 
     var payload = finalizeDay(t);
@@ -611,7 +705,10 @@
         return o;
       })(),
       wrong: Object.keys(S.wrong).filter(function (id) { return !S.wrong[id].graduated; })
-        .map(function (id) { return { q: id, t: S.wrong[id].type, s: S.wrong[id].stage, due: S.wrong[id].due }; }),
+        .map(function (id) {
+          return { q: id, t: S.wrong[id].type, s: S.wrong[id].stage, due: S.wrong[id].due,
+                   l: S.wrong[id].light ? 1 : 0 };
+        }),
       attempts: S.attempts.filter(function (a) { return a.d === d; })
         .map(function (a) { return { q: a.q, ok: a.ok, t: a.t }; }),
     };
@@ -738,7 +835,17 @@
   /* ---------- 组卷：日常 / 回忆录 / 重点 / 全面 / 专项 / 期中期末 ---------- */
   function isWrong(qid) {
     var w = S.wrong[qid];
-    return !!(w && !w.graduated);
+    // 轻量条目（做对但明显在猜）不进错题集，免得家长看到「错题一堆」却没有一道真错
+    return !!(w && !w.graduated && !w.light);
+  }
+  // 轻量复习条目：做对了但改选多次/磨太久，两天后回看一眼
+  function isPending(qid) {
+    var w = S.wrong[qid];
+    return !!(w && !w.graduated && w.light);
+  }
+  function countRealWrong(w) {
+    if (w) w.count = (w.count || 0) + 1;
+    return w;
   }
   // 最近做过的题加惩罚分，让它排到后面——同一只 boss 反复打才不会总撞同样的题。
   // 惩罚只影响抽题顺序，不碰掌握度、计分和错题。
@@ -898,6 +1005,12 @@
       label = '全面复习';
       picked = balanced(spec.scope === 'past' ? window.YW_pastQuestions(S.grade, S.term) : window.YW_currentQuestions(S.grade, S.term), n);
       note = '按单元 / 年级均衡覆盖';
+    } else if (mode === 'weekly') {
+      label = '本周回看';
+      var recap = weekRecap();
+      picked = recap.ids.map(function (id) { return window.YW_Q_BY_ID[id]; })
+        .filter(Boolean).slice(0, spec.count || 10);
+      note = '这一周练过的题里抽 ' + picked.length + ' 道，看还在不在';
     } else if (mode === 'topic') {
       label = spec.training ? '训练场 · 单元小 boss'
             : spec.bossKey ? 'BOSS 战 · 单元小 boss' : '专项复习';
@@ -934,12 +1047,21 @@
       var rPool = lp.filter(function (q) { return !!q.passage; });
       var gt = gateOf(ll);
       var parts = [], missName = [];
+      // 阅读类一律留一个位置给「用一句话说出来」：认得出 ≠ 说得清，
+      // 所以选择题从 3 道减到 2 道，加 1 道自己组织的，总数仍是 8 道。
+      var sayQ = (window.YW_SAY_BY_LESSON || {})[ll] || null;
+      var rPick = sayQ ? 2 : 3;
       if (!gt.w) { parts.push(rank(wPool).slice(0, 3)); missName.push('字词'); }
       if (!gt.b) { parts.push(rank(bPool).slice(0, 2)); missName.push('背诵'); }
-      if (!gt.r) { parts.push(rank(rPool).slice(0, 3)); missName.push('阅读'); }
+      if (!gt.r) {
+        var rl = rank(rPool).slice(0, rPick);
+        if (sayQ) rl.push(sayQ);
+        parts.push(rl); missName.push('阅读');
+      }
       if (!parts.length) {
         // 三关都过了还来闯：当复测，三类全考一遍
-        parts = [rank(wPool).slice(0, 3), rank(bPool).slice(0, 2), rank(rPool).slice(0, 3)];
+        parts = [rank(wPool).slice(0, 3), rank(bPool).slice(0, 2), rank(rPool).slice(0, rPick)];
+        if (sayQ) parts[2].push(sayQ);
         missName = ['字词', '背诵', '阅读'];
       }
       picked = [].concat.apply([], parts);
@@ -1068,7 +1190,12 @@
       var p = root.profiles[id];
       return {
         id: id, name: p.name, blocks: p.blocks || 0, level: p.level || 1,
-        wrong: Object.keys(p.wrong || {}).filter(function (q) { return !p.wrong[q].graduated; }).length,
+        wrong: Object.keys(p.wrong || {}).filter(function (q) {
+          return !p.wrong[q].graduated && !p.wrong[q].light;
+        }).length,
+        pending: Object.keys(p.wrong || {}).filter(function (q) {
+          return !p.wrong[q].graduated && p.wrong[q].light;
+        }).length,
         progress: p.progress, active: !guest && id === root.activeId,
       };
     });
@@ -1741,6 +1868,7 @@
     dateKey: dateKey, todayKey: todayKey, addDays: addDays,
     masteryOf: masteryOf, allMastery: allMastery, unitMastery: unitMastery,
     classify: classify, dueWrong: dueWrong, recordAnswer: recordAnswer,
+    isWrong: isWrong, isPending: isPending,
     lastGaveBlock: function () { return lastGaveBlock; },
     buildDaySnapshot: buildDaySnapshot, finalizeDay: finalizeDay, markSynced: markSynced,
     applySnapshot: applySnapshot, pickRound: pickRound, buildRound: buildRound,
@@ -1759,6 +1887,8 @@
     // 一课一关
     gateOf: gateOf, gateResultOf: gateResultOf, saveGate: saveGate,
     lessonUnlocked: lessonUnlocked, lessonSeq: lessonSeq,
+    // 侥幸做对 → 轻量复习；本周回看
+    isPending: isPending, weekRecap: weekRecap, weekKey: weekKey, markWeekDone: markWeekDone,
     setGrade: function (g, t) { S.grade = Number(g); S.term = t || S.term; syncBookContext(); return persist(); },
     setExamScope: function (key, units) { S.examScope[key] = units; return persist(); },
     addPrize: addPrize, removePrize: removePrize, winBoss: winBoss,
@@ -1770,7 +1900,7 @@
     isConquered: isConquered, markConquest: markConquest,
     bossUnlocked: bossUnlocked, prevBossName: prevBossName,
     coachReadMastery: coachReadMastery, coachWordMastery: coachWordMastery,
-    checkDictation: checkDictation, coachRecordReading: coachRecordReading,
+    checkDictation: checkDictation, judgeSay: judgeSay, coachRecordReading: coachRecordReading,
     coachDueWords: coachDueWords, weakLayers: weakLayers, coachState: coachState,
     coachWordStat: coachWordStat, coachReadOverall: coachReadOverall,
     coachWordSet: coachWordSet, coachWordDrill: coachWordDrill,

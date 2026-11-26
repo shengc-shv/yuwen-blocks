@@ -376,6 +376,20 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 .fill-box { padding: 10px; background: var(--paper); border: 2px dashed var(--dirt); }
 .fill-input { width: 100%; min-height: 52px; padding: 8px 11px; margin-top: 7px; border: 2px solid var(--dirt-d); background: var(--card); font-size: 19px; letter-spacing: 2px; }
 .fill-input:focus { outline: 2px solid var(--grass); outline-offset: 1px; }
+/* 用一句话说出来：读完整段，用自己的话概括。输入框要够高，好让三年级孩子看清自己写的 */
+.say-box { padding: 10px; background: var(--paper); border: 2px dashed var(--dirt); }
+.say-input {
+  width: 100%; min-height: 92px; padding: 9px 11px; margin-top: 7px;
+  border: 2px solid var(--dirt-d); background: var(--card);
+  font-size: 17px; line-height: 1.75; font-family: inherit; resize: vertical;
+}
+.say-input:focus { outline: 2px solid var(--grass); outline-offset: 1px; }
+.say-mine { padding: 9px 11px; margin: 8px 0; background: var(--card);
+  border-left: 4px solid var(--dirt-d); }
+.say-mine p { margin: 3px 0 0; font-size: 16px; line-height: 1.7; }
+.say-ref { padding: 9px 11px; margin: 8px 0 12px; background: var(--paper);
+  border-left: 4px solid var(--grass); }
+.say-ref p { margin: 3px 0 0; font-size: 16px; line-height: 1.7; }
 /* 挑错字：在句子里找出写错的那个字，点一下即可 */
 .spot-box { padding: 10px; background: var(--paper); border: 2px dashed var(--dirt-d); }
 .spot-sentence { padding: 12px 10px; margin: 8px 0; background: var(--card); border: 2px solid var(--line); font-size: 17px; line-height: 1.8; }
