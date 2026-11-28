@@ -8,7 +8,7 @@
   <title>方块语文 · 三年级上</title>
   <!-- 方块风格图标：两枚草方块，省一次 favicon 的 404 -->
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23f4f1e8'/%3E%3Crect x='1' y='3' width='6' height='6' fill='%236aa84f'/%3E%3Crect x='1' y='3' width='6' height='2' fill='%2382c46a'/%3E%3Crect x='9' y='7' width='6' height='6' fill='%23b07a45'/%3E%3Crect x='9' y='7' width='6' height='2' fill='%23cd9660'/%3E%3C/svg%3E" />
-  <link rel="stylesheet" href="./css/style.css?v=25" />
+  <link rel="stylesheet" href="./css/style.css?v=26" />
 </head>
 <body>
   <!-- 原创像素生物头（苔苔 / 岩岩 / 团团）：全部由矩形逐格绘制，自创形象与配色，
@@ -2046,27 +2046,28 @@
 
   <div id="toast" class="toast hidden" role="alert"></div>
 
-  <!-- 固定到正式版 0.1.4，不用 @dev：dev 标签会被上游重指，某一台设备拉到不同构建就会出现「有的能看礼物库、有的空白」 -->
-  <script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@0.1.4/lib/index.global.js"></script>
-  <script src="./js/config.js?v=25"></script>
-  <script src="./js/curriculum.js?v=25"></script>
-  <script src="./js/bank-data.js?v=25"></script>
-  <script src="./js/question-bank.js?v=25"></script>
-  <script src="./js/bank-ext.js?v=25"></script>
-  <script src="./js/books.js?v=25"></script>
-  <script src="./js/book-gen.js?v=25"></script>
-  <script src="./js/books/g3s2-data.js?v=25"></script>
-  <script src="./js/books/g3s2-ext.js?v=25"></script>
-  <script src="./js/books/g3s2-extra.js?v=25"></script>
-  <script src="./js/books/reading-g3s1.js?v=25"></script>
-  <script src="./js/books/say-g3s1.js?v=25"></script>
-  <script src="./js/books/recite-g3s1.js?v=25"></script>
-  <script src="./js/books/words-g3s1.js?v=25"></script>
-  <script src="./js/coach-data.js?v=25"></script>
-  <script src="./js/explain-detail.js?v=25"></script>
-  <script src="./js/explain.js?v=25"></script>
-  <script src="./js/store.js?v=25"></script>
-  <script src="./js/cloud.js?v=25"></script>
-  <script src="./js/app.js?v=25"></script>
+  <!-- 云端 SDK（MIT）本地打包，正式版 0.1.4，md5 c52b7ce1534b3ad118d567fbfcc77365。
+       不再走 jsdelivr：iPad / 国内网络对 CDN 不稳，脚本没加载就会「云端没连上」，礼物库读不到。 -->
+  <script src="./js/vendor/workbuddy-cloud-sdk.global.js"></script>
+  <script src="./js/config.js?v=26"></script>
+  <script src="./js/curriculum.js?v=26"></script>
+  <script src="./js/bank-data.js?v=26"></script>
+  <script src="./js/question-bank.js?v=26"></script>
+  <script src="./js/bank-ext.js?v=26"></script>
+  <script src="./js/books.js?v=26"></script>
+  <script src="./js/book-gen.js?v=26"></script>
+  <script src="./js/books/g3s2-data.js?v=26"></script>
+  <script src="./js/books/g3s2-ext.js?v=26"></script>
+  <script src="./js/books/g3s2-extra.js?v=26"></script>
+  <script src="./js/books/reading-g3s1.js?v=26"></script>
+  <script src="./js/books/say-g3s1.js?v=26"></script>
+  <script src="./js/books/recite-g3s1.js?v=26"></script>
+  <script src="./js/books/words-g3s1.js?v=26"></script>
+  <script src="./js/coach-data.js?v=26"></script>
+  <script src="./js/explain-detail.js?v=26"></script>
+  <script src="./js/explain.js?v=26"></script>
+  <script src="./js/store.js?v=26"></script>
+  <script src="./js/cloud.js?v=26"></script>
+  <script src="./js/app.js?v=26"></script>
 </body>
 </html>
