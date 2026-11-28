@@ -781,14 +781,63 @@
       });
   }
 
-  // 从云端拉一次全局礼物库；返回是否发生了变化（用来决定要不要重绘面板）
+  /* 从云端拉一次全局礼物库。
+   * 状态记在 giftCloudState 上，面板直接显示：没连上 / 正在读 / 读失败都要说清楚，
+   * 不能像以前那样静默返回 false，让新设备的空缓存被误读成「礼物库是空的」。
+   * 并发去重：boot、礼物袋、大陆页、礼物库可能同时触发，别一路打四次云端。
+   */
+  var giftCloudState = { phase: 'idle', msg: '', pending: null };
   function refreshGiftPool() {
-    if (!window.YWCloud || !window.YWCloud.isReady()) return Promise.resolve(false);
+    if (giftCloudState.pending) return giftCloudState.pending;
+    if (!window.YWCloud || !window.YWCloud.isReady()) {
+      giftCloudState.phase = 'off';
+      giftCloudState.msg = (window.YWCloud && window.YWCloud.reason()) || '云端组件没加载上（离线或网络受限）';
+      return Promise.resolve(false);
+    }
+    giftCloudState.phase = 'loading'; giftCloudState.msg = '';
     var before = JSON.stringify(St.giftPool());
-    return window.YWCloud.listGifts().then(function (rows) {
-      St.setGiftPool(rows);
+    var task = window.YWCloud.listGifts().then(function (rows) {
+      St.setGiftPool(rows || []);
+      giftCloudState.phase = 'ok';
       return before !== JSON.stringify(St.giftPool());
-    }).catch(function () { return false; });
+    }).catch(function (e) {
+      // 保留原始错误：面板要把真正原因告诉用户，而不是给一句「空」
+      giftCloudState.phase = 'error';
+      giftCloudState.msg = (e && e.message) ? e.message : '云端没回应';
+      return false;
+    });
+    giftCloudState.pending = task;
+    task.then(function () { giftCloudState.pending = null; },
+              function () { giftCloudState.pending = null; });
+    return task;
+  }
+  // 礼物库的云端状态条：失败时给出原因和「重试」，不再是一句孤零零的「共 0 件」
+  function giftCloudNotice() {
+    if (giftCloudState.phase === 'off') {
+      return '<div class="gift-cloud-warn"><b>云端没连上，暂时读不到礼物库</b>' +
+        '<span class="tiny">' + esc(giftCloudState.msg) + '。当前显示的是这台设备上次存下的礼物；' +
+        '换了新设备/新昵称时会是空的。点下面的「重试」再试一次。</span></div>';
+    }
+    if (giftCloudState.phase === 'error') {
+      return '<div class="gift-cloud-warn"><b>读取礼物库失败</b>' +
+        '<span class="tiny">' + esc(giftCloudState.msg) + '。当前显示的是本机缓存，点「重试」重来。</span></div>';
+    }
+    if (giftCloudState.phase === 'loading') {
+      return '<div class="gift-cloud-wait"><span class="tiny">正在从云端读取礼物…</span></div>';
+    }
+    return '';
+  }
+  // 进礼物库先显示状态页，等云端回来再渲染列表，避免新设备闪一下「共 0 件」
+  function openGiftPoolLoading() {
+    if (St.isGuest()) { toast('取个昵称才能看礼物库'); return; }
+    overlay([
+      '<h2>礼物库</h2>',
+      '<p class="muted">礼物放在云端，所有设备都能掉同一批。</p>',
+      '<div class="gift-cloud-wait"><span class="tiny">正在从云端读取礼物…</span></div>',
+      '<div class="btn-row" style="margin-top:12px">',
+        '<button class="btn ghost" data-action="close-overlay">关闭</button>',
+      '</div>',
+    ].join(''));
   }
 
   function finishBoss(outcome) {
@@ -1117,8 +1166,14 @@
 
     overlay([
       '<h2>礼物库</h2>',
-      '<p class="muted">礼物放在云端，所有设备都能掉同一批。共 ', pool.length, ' 件。</p>',
+      '<p class="muted">礼物放在云端，所有设备都能掉同一批。',
+        (giftCloudState.phase === 'ok' || giftCloudState.phase === 'idle'
+          ? '当前共 ' + pool.length + ' 件。'
+          : '当前显示的 ' + pool.length + ' 件是本机缓存，不是云端实时数据。'), '</p>',
+      giftCloudNotice(),
       notice ? '<p class="tiny" style="color:var(--red)">' + esc(notice) + '</p>' : '',
+      giftCloudState.phase === 'ok' && !pool.length
+        ? '<p class="tiny">云端礼物库现在是空的：让「' + esc(St.giftOwner()) + '」在这个昵称下放几件礼物，打 boss 才有东西可掉。</p>' : '',
       '<div class="rate-box"><p class="tiny">掉落概率（暗黑式：越大的 boss 越容易出高阶礼物）</p>', rateRows, '</div>',
       mine
         ? [
@@ -1137,7 +1192,10 @@
         : '<p class="tiny">礼物库由「' + esc(St.giftOwner()) + '」管理，你负责打 boss 开箱。</p>',
       tierBlocks,
       '<div class="btn-row" style="margin-top:12px">',
-        '<button class="btn ghost" data-action="gift-refresh">刷新</button>',
+        '<button class="btn', giftCloudState.phase === 'error' || giftCloudState.phase === 'off' ? ' primary' : '',
+          '" data-action="gift-refresh">',
+          giftCloudState.phase === 'error' || giftCloudState.phase === 'off' ? '重试读取' : '刷新',
+          '</button>',
         '<button class="btn ghost" data-action="close-overlay">关闭</button>',
       '</div>',
     ].join(''));
@@ -2660,38 +2718,52 @@
           });
         break;
       case 'gift-pool':
-        openGiftPool();
-        refreshGiftPool().then(function (changed) { if (changed) openGiftPool(); });
+        // 先出状态层，再等云端结果渲染：新设备不会先闪一下空白列表
+        openGiftPoolLoading();
+        refreshGiftPool().then(function () { openGiftPool(); });
         break;
       case 'gift-refresh':
-        toast('正在刷新…');
-        refreshGiftPool().then(function (changed) {
-          openGiftPool(changed ? '' : '已是最新');
-        });
+        openGiftPoolLoading();
+        refreshGiftPool().then(function () { openGiftPool(); });
         break;
       case 'gift-add': {
         var gn = document.getElementById('gift-name');
         var gt = document.getElementById('gift-tier');
         var gname = gn ? gn.value.replace(/\s+/g, ' ').trim().slice(0, 16) : '';
         if (!gname) { toast('先写个礼物名字'); break; }
-        if (!window.YWCloud || !window.YWCloud.isReady()) { openGiftPool('云端没连上，礼物库暂时改不了'); break; }
+        if (!window.YWCloud || !window.YWCloud.isReady()) {
+          giftCloudState.phase = 'off'; giftCloudState.msg = window.YWCloud.reason() || '云端没连上';
+          openGiftPool('云端没连上，礼物库暂时改不了'); break;
+        }
         window.YWCloud.addGift({ name: gname, tier: gt ? gt.value : 'white', createdBy: St.giftOwner() })
           .then(function () { return refreshGiftPool(); })
           .then(function () { toast('已放进礼物库'); openGiftPool(); })
-          .catch(function (e) { openGiftPool(e.message || '没放进去，待会儿再试'); });
+          .catch(function (e) {
+            giftCloudState.phase = 'error'; giftCloudState.msg = e.message || '没放进去';
+            openGiftPool(e.message || '没放进去，待会儿再试');
+          });
         break;
       }
       case 'gift-del': {
         if (!St.canManageGifts()) { toast('只有礼物管理员能删'); break; }
-        if (!window.YWCloud || !window.YWCloud.isReady()) { openGiftPool('云端没连上，暂时删不了'); break; }
+        if (!window.YWCloud || !window.YWCloud.isReady()) {
+          giftCloudState.phase = 'off'; giftCloudState.msg = window.YWCloud.reason() || '云端没连上';
+          openGiftPool('云端没连上，暂时删不了'); break;
+        }
         var gid = d.id;
         window.YWCloud.removeGift(gid)
           .then(function () { return refreshGiftPool(); })
           .then(function () { toast('已删除'); openGiftPool(); })
-          .catch(function (e) { openGiftPool(e.message || '没删掉，待会儿再试'); });
+          .catch(function (e) {
+            giftCloudState.phase = 'error'; giftCloudState.msg = e.message || '没删掉';
+            openGiftPool(e.message || '没删掉，待会儿再试');
+          });
         break;
       }
-      case 'prize-pool': openGiftPool(); break;
+      case 'prize-pool':
+        openGiftPoolLoading();
+        refreshGiftPool().then(function () { openGiftPool(); });
+        break;
       case 'resume-round': {
         var pr = St.loadRound();
         if (!pr) { toast('这一趟已经不在了'); render(); break; }

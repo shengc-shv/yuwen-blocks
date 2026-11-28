@@ -680,6 +680,11 @@ body.is-guest .sync-bar { color: var(--amber-d); }
 
 /* 礼物库表单与掉率表 */
 .rate-box { margin: 10px 0; padding: 8px 10px; background: var(--paper-2); border: 2px solid var(--dirt-d); }
+/* 礼物库云端状态：没连上/读失败要说清原因，不能只显示「共 0 件」 */
+.gift-cloud-warn { margin: 10px 0; padding: 9px 10px; background: var(--red-l); border: 2px solid var(--red); }
+.gift-cloud-warn b { display: block; margin-bottom: 3px; color: var(--red); font-size: 13px; }
+.gift-cloud-warn .tiny { color: var(--red); }
+.gift-cloud-wait { margin: 10px 0; padding: 12px 10px; text-align: center; background: var(--paper-2); border: 2px dashed var(--dirt-d); }
 .rate-row { display: flex; align-items: center; gap: 6px; padding: 3px 0; font-size: 11px; }
 .rate-row > span { flex: none; width: 50px; color: var(--ink-2); }
 .rate-row b { flex: 1; text-align: center; padding: 3px 0; font-weight: 700;
